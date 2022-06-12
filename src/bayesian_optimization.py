@@ -74,10 +74,13 @@ class bayesian_optimization:
         self._grid = np.array(list(itertools.product(*grid_elemets)))
 
         # Global Maximum
+        obj_grid = None
         self.arg_max = arg_max
         if self.arg_max is None:
             obj_grid = [self.objective(i) for i in self._grid]
             self.arg_max = np.array(self._grid[np.array(obj_grid).argmax(), :]).reshape(-1, self._dim)
+        print('controller', self.arg_max)
+        if obj_grid: print('optimal obj', max(obj_grid))
 
         # Model Setup
         self.alpha = alpha
