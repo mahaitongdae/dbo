@@ -510,7 +510,7 @@ class bayesian_optimization:
             acq = [-1 * self._acquisition_evaluations[a][iter//plot_iter] for a in range(self.n_workers)]
 
         for a in range(self.n_workers):
-            mu[a] = self.scaler[a].inverse_transform(mu[a])
+            mu[a] = self.scaler[a].inverse_transform(mu[a].reshape(-1, 1))
             std[a] = self.scaler[a].scale_ * std[a]
 
         if self._dim == 1:
