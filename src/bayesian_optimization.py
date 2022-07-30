@@ -860,7 +860,8 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                     # Updata data knowledge
                     if n == 0:
                         X = self.X[a]
-                        Y = self.obj_Y[a]
+                        obj_Y = self.obj_Y[a]
+                        cstr_Y = self.cstr_Y[a]
                         self.X_train[a] = self.X[a][:]
                         self.obj_Y_train[a] = self.obj_Y[a][:]
                         self.cstr_Y_train[a] = self.cstr_Y[a][:]
@@ -872,18 +873,23 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                         self.obj_Y_train[a].append(self.objective(self._next_query[a]))
 
                         X = self.X[a]
-                        Y = self.obj_Y[a]
+                        obj_Y = self.obj_Y[a]
+                        cstr_Y = self.cstr_Y[a]
                         for transmitter in range(self.n_workers):
                             for (x,y) in self._prev_bc_data[transmitter][a]:
                                 X = np.append(X,x).reshape(-1, self._dim)
-                                Y = np.append(Y,y).reshape(-1, 1)
+                                obj_Y = np.append(obj_Y, y[0]).reshape(-1, 1)
+                                cstr_Y = np.append(cstr_Y, y[1]).reshape(-1, 1)
                                 self.X_train[a].append(x)
-                                self.obj_Y_train[a].append(y)
+                                self.obj_Y_train[a].append(y[0])
+                                self.cstr_Y_train[a].append(y[1])
 
                     # Standardize
-                    Y = self.scaler[a].fit_transform(np.array(Y).reshape(-1, 1))
+                    obj_Y = self.scaler[a][0].fit_transform(np.array(obj_Y).reshape(-1, 1))
+                    cstr_Y = self.scaler[a][1].fit_transform(np.array(cstr_Y).reshape(-1, 1))
                     # Fit surrogate
-                    self.model[a].fit(X, Y)
+                    self.model[a].fit(X, obj_Y)
+                    self.cstr_model[a].fit(X, cstr_Y)
 
                     # Find next query
                     x = self._find_next_query(n, a, random_search)
@@ -894,7 +900,7 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                         x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
 
                     # Broadcast data to neighbours
-                    self._broadcast(a,x,self.objective(x))
+                    self._broadcast(a,x,np.array((self.objective(x), self.cstr(x))))
 
                 # Calculate regret
                 self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.obj_Y_train for y_max in y_a]))
@@ -955,9 +961,15 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             expected_improvement[sigma == 0.0] = 0
             expected_improvement[expected_improvement < 10**(-100)] = 0
 
+        threshold = np.zeros([x.shape[0], 1])
+        threshold = self.scaler[a][1].transform(threshold)
         cstr_mu, cstr_sigma = cstr_model.predict(x, return_std=True)
+        with np.errstate(divide='ignore'):
+            Z = (threshold - cstr_mu) / cstr_sigma
+            cstr_prob = norm.cdf(Z)
+            cstr_prob[sigma == 0.0] = 1.0
+        cstr_weighted_expected_improvement = np.multiply(expected_improvement, cstr_prob)
 
-
-        return -1 * expected_improvement
+        return -1 * cstr_weighted_expected_improvement
 
 

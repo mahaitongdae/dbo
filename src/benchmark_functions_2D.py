@@ -68,7 +68,7 @@ class Branin:
         self.r = 6
         self.s = 10
         self.t = 1 / (8 * np.pi)
-        self.function = lambda x: np.square(x[1] - self.b * x[0] ** 2 + self.c * x[0] - self.r) + self.s * (1 - t)* np.cos(x[0]) + self.s
+        self.function = lambda x: np.square(x[1] - self.b * x[0] ** 2 + self.c * x[0] - self.r) + self.s * (1 - self.t)* np.cos(x[0]) + self.s
         self.min = 0.397887
         self.arg_min = np.array([[-np.pi, 12.275], [np.pi, 2.275], [9.42478, 2,475]])
 
