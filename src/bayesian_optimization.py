@@ -22,6 +22,9 @@ from sklearn.gaussian_process import kernels, GaussianProcessRegressor
 
 warnings.filterwarnings("ignore")
 
+
+
+
 class bayesian_optimization:
     def __init__(self, objective, domain, arg_max = None, n_workers = 1, network = None, kernel = kernels.RBF(), alpha=10**(-10), acquisition_function = 'ei', policy = 'greedy', fantasies = 0, epsilon = 0.01, regularization = None, regularization_strength = None, pending_regularization = None, pending_regularization_strength = None, grid_density = 100):
 
@@ -92,12 +95,12 @@ class bayesian_optimization:
 
         # Data holders
         self.bc_data = None
-        self.X_train = self.Y_train = None
-        self.X = self.Y = None
+        self.X_train = self.obj_Y_train = None
+        self.X = self.obj_Y = None
         self._acquisition_evaluations = [[] for i in range(n_workers)]
 
         # Directory setup
-        self._DT_ = datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+        self._DT_ = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
         self._ROOT_DIR_ = os.path.dirname(os.path.dirname( __main__.__file__ ))
         self._TEMP_DIR_ = os.path.join(self._ROOT_DIR_, "temp")
         self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_)
@@ -269,7 +272,7 @@ class bayesian_optimization:
             for i in range(self._num_fantasies):
 
                 f_X_train = self.X_train[a][:]
-                f_y_train = self.Y_train[a][:]
+                f_y_train = self.obj_Y_train[a][:]
 
                 fantasy_scaler = StandardScaler()
                 fantasy_scaler.fit(np.array(f_y_train).reshape(-1, 1))
@@ -386,9 +389,9 @@ class bayesian_optimization:
             self._next_query = [[] for i in range(self.n_workers)]
             self.bc_data = [[[] for j in range(self.n_workers)] for i in range(self.n_workers)]
             self.X_train = [[] for i in range(self.n_workers)]
-            self.Y_train =[[] for i in range(self.n_workers)]
+            self.obj_Y_train =[[] for i in range(self.n_workers)]
             self.X = [[] for i in range(self.n_workers)]
-            self.Y = [[] for i in range(self.n_workers)]
+            self.obj_Y = [[] for i in range(self.n_workers)]
             self.model = [GaussianProcessRegressor(  kernel=self.kernel,
                                                         alpha=self.alpha,
                                                         n_restarts_optimizer=10)
@@ -399,14 +402,14 @@ class bayesian_optimization:
                 for params in np.random.uniform(self.domain[:, 0], self.domain[:, 1], (n_pre_samples, self.domain.shape[0])):
                     for a in range(self.n_workers):
                         self.X[a].append(params)
-                        self.Y[a].append(self.objective(params))
+                        self.obj_Y[a].append(self.objective(params))
             else:
                 # Change definition of x0 to be specfic for each agent
                 for params in x0:
                     for a in range(self.n_workers):
                         self.X[a].append(params)
-                        self.Y[a].append(self.objective(params))
-            self._initial_data_size = len(self.Y[0])
+                        self.obj_Y[a].append(self.objective(params))
+            self._initial_data_size = len(self.obj_Y[0])
 
 
             for n in tqdm(range(n_iters+1), position = n_runs > 1, leave = None):
@@ -426,23 +429,23 @@ class bayesian_optimization:
                     # Updata data knowledge
                     if n == 0:
                         X = self.X[a]
-                        Y = self.Y[a]
+                        Y = self.obj_Y[a]
                         self.X_train[a] = self.X[a][:]
-                        self.Y_train[a] = self.Y[a][:]
+                        self.obj_Y_train[a] = self.obj_Y[a][:]
                     else:
                         self.X[a].append(self._next_query[a])
-                        self.Y[a].append(self.objective(self._next_query[a]))
+                        self.obj_Y[a].append(self.objective(self._next_query[a]))
                         self.X_train[a].append(self._next_query[a])
-                        self.Y_train[a].append(self.objective(self._next_query[a]))
+                        self.obj_Y_train[a].append(self.objective(self._next_query[a]))
 
                         X = self.X[a]
-                        Y = self.Y[a]
+                        Y = self.obj_Y[a]
                         for transmitter in range(self.n_workers):
                             for (x,y) in self._prev_bc_data[transmitter][a]:
                                 X = np.append(X,x).reshape(-1, self._dim)
                                 Y = np.append(Y,y).reshape(-1, 1)
                                 self.X_train[a].append(x)
-                                self.Y_train[a].append(y)
+                                self.obj_Y_train[a].append(y)
 
                     # Standardize
                     Y = self.scaler[a].fit_transform(np.array(Y).reshape(-1, 1))
@@ -461,7 +464,7 @@ class bayesian_optimization:
                     self._broadcast(a,x,self.objective(x))
 
                 # Calculate regret
-                self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.Y_train for y_max in y_a]))
+                self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.obj_Y_train for y_max in y_a]))
                 # Calculate distance traveled
                 if not n:
                     self._distance_traveled[run,n] = 0
@@ -541,7 +544,7 @@ class bayesian_optimization:
             # Surrogate plot
             ax1.plot(self._grid, mu[a], color = rgba[a], lw=1)
             ax1.fill_between(np.squeeze(self._grid), np.squeeze(mu[a]) - 2*std[a], np.squeeze(mu[a]) + 2*std[a], color = rgba[a], alpha=0.1)
-            ax1.scatter(self.X[a], self.Y[a], color = rgba[a], s=20, zorder=3)
+            ax1.scatter(self.X[a], self.obj_Y[a], color = rgba[a], s=20, zorder=3)
             ax1.yaxis.set_major_formatter(fmt)
             ax1.set_ylim(bottom = -10, top=14)
             ax1.set_xticks(np.linspace(self._grid[0],self._grid[-1], 5))
@@ -596,7 +599,7 @@ class bayesian_optimization:
         fmt.useMathText = True
 
         x = np.array(self.X)
-        y = np.array(self.Y)
+        y = np.array(self.obj_Y)
 
         first_param_grid = np.linspace(self.domain[0,0], self.domain[0,1], self._grid_density)
         second_param_grid = np.linspace(self.domain[1,0], self.domain[1,1], self._grid_density)
@@ -771,3 +774,190 @@ class bayesian_optimization:
                             plots.append(imageio.imread(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d.png' % (i, a)))
                         except: pass
                 imageio.mimsave(self._GIF_DIR_ + '/bo_agent_%d.gif' % (a), plots, duration=1.0)
+
+
+class BeyesianOptimizationWithCstr(bayesian_optimization):
+
+    def __init__(self, objective, cstr, domain, arg_max = None, n_workers = 1, network = None, kernel = kernels.RBF(), alpha=10**(-10),
+                 acquisition_function = 'ei', policy = 'greedy', fantasies = 0, epsilon = 0.01, regularization = None,
+                 regularization_strength = None, pending_regularization = None, pending_regularization_strength = None, grid_density = 100):
+        super(BeyesianOptimizationWithCstr, self).__init__(objective, domain, arg_max, n_workers, network, kernel, alpha,
+                                                           acquisition_function, policy, fantasies, epsilon, regularization,
+                                                           regularization_strength, pending_regularization, pending_regularization_strength, grid_density)
+        self.cstr = cstr
+        self.cstr_model = self.model.copy()
+        self.scaler = [[StandardScaler(), StandardScaler()] for i in range(n_workers)]
+
+
+    def optimize(self, n_iters, n_runs = 1, x0=None, n_pre_samples=5, random_search=100, plot = False):
+        """
+        Arguments:
+        ----------
+            n_iters: integer.
+                Number of iterations to run the search algorithm.
+            x0: array-like, shape = [n_pre_samples, n_params].
+                Array of initial points to sample the loss function for. If None, randomly
+                samples from the loss function.
+            n_pre_samples: integer.
+                If x0 is None, samples `n_pre_samples` initial points.
+            random_search: integer.
+                Flag that indicates whether to perform random search or L-BFGS-B to optimize the acquisition function.
+            plot: bool or integer
+                If integer, plot iterations with every plot number iteration. If True, plot every interation.
+        """
+
+        self._simple_regret = np.zeros((n_runs, n_iters+1))
+        self._distance_traveled = np.zeros((n_runs, n_iters+1))
+
+        for run in tqdm(range(n_runs), position=0, leave = None, disable = not n_runs > 1):
+
+            # Reset model and data before each run
+            self._next_query = [[] for i in range(self.n_workers)]
+            self.bc_data = [[[] for j in range(self.n_workers)] for i in range(self.n_workers)]
+            self.X_train = [[] for i in range(self.n_workers)]
+            self.obj_Y_train =[[] for i in range(self.n_workers)]
+            self.cstr_Y_train = [[] for i in range(self.n_workers)]
+            self.X = [[] for i in range(self.n_workers)]
+            self.obj_Y = [[] for i in range(self.n_workers)]
+            self.cstr_Y = [[] for i in range(self.n_workers)]
+            self.model = [GaussianProcessRegressor(  kernel=self.kernel,
+                                                        alpha=self.alpha,
+                                                        n_restarts_optimizer=10)
+                                                        for i in range(self.n_workers) ]
+            self.cstr_model = self.model.copy()
+
+            # Initial data
+            if x0 is None:
+                for params in np.random.uniform(self.domain[:, 0], self.domain[:, 1], (n_pre_samples, self.domain.shape[0])):
+                    for a in range(self.n_workers):
+                        self.X[a].append(params)
+                        self.obj_Y[a].append(self.objective(params))
+                        self.cstr_Y[a].append(self.cstr(params))
+            else:
+                # Change definition of x0 to be specfic for each agent
+                for params in x0:
+                    for a in range(self.n_workers):
+                        self.X[a].append(params)
+                        self.obj_Y[a].append(self.objective(params))
+                        self.cstr_Y[a].append(self.cstr(params))
+            self._initial_data_size = len(self.obj_Y[0])
+
+
+            for n in tqdm(range(n_iters+1), position = n_runs > 1, leave = None):
+
+                # record step indicator
+                self._record_step = False
+                if plot and n_runs == 1:
+                    if n == n_iters or not n % plot:
+                        self._record_step = True
+
+
+
+                self._prev_bc_data = copy.deepcopy(self.bc_data)
+
+                for a in range(self.n_workers):
+
+                    # Updata data knowledge
+                    if n == 0:
+                        X = self.X[a]
+                        Y = self.obj_Y[a]
+                        self.X_train[a] = self.X[a][:]
+                        self.obj_Y_train[a] = self.obj_Y[a][:]
+                        self.cstr_Y_train[a] = self.cstr_Y[a][:]
+                    else:
+                        self.X[a].append(self._next_query[a])
+                        self.obj_Y[a].append(self.objective(self._next_query[a]))
+                        self.cstr_Y[a].append(self.cstr(self._next_query[a]))
+                        self.X_train[a].append(self._next_query[a])
+                        self.obj_Y_train[a].append(self.objective(self._next_query[a]))
+
+                        X = self.X[a]
+                        Y = self.obj_Y[a]
+                        for transmitter in range(self.n_workers):
+                            for (x,y) in self._prev_bc_data[transmitter][a]:
+                                X = np.append(X,x).reshape(-1, self._dim)
+                                Y = np.append(Y,y).reshape(-1, 1)
+                                self.X_train[a].append(x)
+                                self.obj_Y_train[a].append(y)
+
+                    # Standardize
+                    Y = self.scaler[a].fit_transform(np.array(Y).reshape(-1, 1))
+                    # Fit surrogate
+                    self.model[a].fit(X, Y)
+
+                    # Find next query
+                    x = self._find_next_query(n, a, random_search)
+                    self._next_query[a] = x
+
+                    # In case of a "duplicate", randomly sample next query point.
+                    if np.any(np.abs(x - self.model[a].X_train_) <= 10**(-7)):
+                        x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
+
+                    # Broadcast data to neighbours
+                    self._broadcast(a,x,self.objective(x))
+
+                # Calculate regret
+                self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.obj_Y_train for y_max in y_a]))
+                # Calculate distance traveled
+                if not n:
+                    self._distance_traveled[run,n] = 0
+                else:
+                    self._distance_traveled[run,n] =  self._distance_traveled[run,n-1] + sum([np.linalg.norm(self.X[a][-2] - self.X[a][-1]) for a in range(self.n_workers)])
+
+                # Plot optimization step
+                if self._record_step:
+                    self._plot_iteration(n, plot)
+
+        self.pre_arg_max = []
+        self.pre_max = []
+        for a in range(self.n_workers):
+            self.pre_arg_max.append(np.array(self.model[a].y_train_).argmax())
+            self.pre_max.append(self.model[a].X_train_[np.array(self.model[a].y_train_).argmax()])
+
+        # Compute and plot regret
+        iter, r_mean, r_conf95 = self._mean_regret()
+        self._plot_regret(iter, r_mean, r_conf95)
+
+        iter, d_mean, d_conf95 = self._mean_distance_traveled()
+
+        # Save data
+        self._save_data(data = [iter, r_mean, r_conf95, d_mean, d_conf95], name = 'data')
+
+        # Generate gif
+        if plot and n_runs == 1:
+            self._generate_gif(n_iters, plot)
+
+    def _expected_improvement(self, a, x, model = None, cstr_model = None):
+        """
+        Expected improvement acquisition function.
+        Arguments:
+        ----------
+            x: array-like, shape = [n_samples, n_hyperparams]
+                The point for which the expected improvement needs to be computed.
+        """
+
+        x = x.reshape(-1, self._dim)
+
+        if model is None:
+            model = self.model[a]
+        if cstr_model is None:
+            cstr_model = self.cstr_model[a]
+
+        Y_max = np.max(model.y_train_)
+
+        mu, sigma = model.predict(x, return_std=True)
+        mu = np.squeeze(mu)
+        mu = self._regularize(x, a, mu, Y_max)
+
+        with np.errstate(divide='ignore'):
+            Z = (mu - Y_max) / sigma
+            expected_improvement = (mu - Y_max) * norm.cdf(Z) + sigma * norm.pdf(Z)
+            expected_improvement[sigma == 0.0] = 0
+            expected_improvement[expected_improvement < 10**(-100)] = 0
+
+        cstr_mu, cstr_sigma = cstr_model.predict(x, return_std=True)
+
+
+        return -1 * expected_improvement
+
+

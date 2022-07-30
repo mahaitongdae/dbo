@@ -59,3 +59,20 @@ class Bird:
         self.function = lambda x: np.sin(x[0])*np.exp((1-np.cos(x[1]))**2) + np.cos(x[1])*np.exp((1-np.sin(x[0]))**2) + (x[0]-x[1])**2
         self.min = - 106.764537
         self.arg_min = np.array([[4.70104, 3.15294],[-1.58214,-3.13024]])
+
+class Branin:
+    def __init__(self):
+        self.domain = np.array([[-5, 10], [0, 15]])
+        self.b = 5.1 / (4 * np.pi ** 2)
+        self.c = 5 / np.pi
+        self.r = 6
+        self.s = 10
+        self.t = 1 / (8 * np.pi)
+        self.function = lambda x: np.square(x[1] - self.b * x[0] ** 2 + self.c * x[0] - self.r) + self.s * (1 - t)* np.cos(x[0]) + self.s
+        self.min = 0.397887
+        self.arg_min = np.array([[-np.pi, 12.275], [np.pi, 2.275], [9.42478, 2,475]])
+
+class Disk:
+    def __init__(self):
+        self.domain = np.array([[-5, 10], [0, 15]])
+        self.function = lambda x: -(np.square(x[0] - 2.5) + np.square((x[1] - 7.5))) + 7.5 ** 2
