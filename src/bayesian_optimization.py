@@ -962,14 +962,37 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             expected_improvement[expected_improvement < 10**(-100)] = 0
 
         threshold = np.zeros([x.shape[0], 1])
-        threshold = self.scaler[a][1].transform(threshold)
+        threshold = self.scaler[a][1].transform(threshold).squeeze()
         cstr_mu, cstr_sigma = cstr_model.predict(x, return_std=True)
         with np.errstate(divide='ignore'):
             Z = (threshold - cstr_mu) / cstr_sigma
-            cstr_prob = norm.cdf(Z)
+            cstr_prob = 1 - norm.cdf(Z)
             cstr_prob[sigma == 0.0] = 1.0
         cstr_weighted_expected_improvement = np.multiply(expected_improvement, cstr_prob)
 
         return -1 * cstr_weighted_expected_improvement
+
+    def _plot_iteration(self, iter, plot_iter):
+        """
+        Plots the surrogate and acquisition function.
+        """
+        mu = []
+        std = []
+        for a in range(self.n_workers):
+            mu_a, std_a = self.model[a].predict(self._grid, return_std=True)
+            mu.append(mu_a)
+            std.append(std_a)
+            acq = [-1 * self._acquisition_evaluations[a][iter//plot_iter] for a in range(self.n_workers)]
+
+        for a in range(self.n_workers):
+            mu[a] = self.scaler[a][0].inverse_transform(mu[a].reshape(-1, 1))
+            std[a] = self.scaler[a][0].scale_ * std[a]
+
+        if self._dim == 1:
+            self._plot_1d(iter, mu, std, acq)
+        elif self._dim == 2:
+            self._plot_2d(iter, mu, acq)
+        else:
+            print("Can't plot for higher dimensional problems.")
 
 
