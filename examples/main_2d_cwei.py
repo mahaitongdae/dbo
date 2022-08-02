@@ -7,12 +7,12 @@ from src.benchmark_functions_2D import *
 np.random.seed(0)
 
 # Benchmark Function
-fun = Branin()
-domain = fun.domain
-obj_fun = lambda x: -1*fun.function(x)
-arg_max = fun.arg_min
-fun = Disk()
-cstr_fun = lambda x: fun.function(x)
+branin = Branin()
+domain = branin.domain
+obj_fun = lambda x: -1*branin.function(x)
+arg_max = branin.arg_min
+disk = Disk()
+cstr_fun = lambda x: disk.function(x)
 
 # Communication network
 N = np.eye(3)
@@ -25,7 +25,8 @@ BO = BeyesianOptimizationWithCstr( objective = obj_fun,
                                     arg_max = arg_max,
                                     n_workers = 3,
                                     network = N,
-                                    kernel = kernels.RBF(length_scale_bounds=(1, 1000.0)),
+                                    # kernel = kernels.RBF(length_scale_bounds=(1, 1000.0)),
+                                   kernel= kernels.Matern(length_scale=(1, 1000.0)),
                                     acquisition_function = 'ei',
                                     policy = 'greedy',
                                     fantasies = 0,
@@ -34,6 +35,6 @@ BO = BeyesianOptimizationWithCstr( objective = obj_fun,
                                     grid_density = 30)
 
 # Optimize
-BO.optimize(n_iters = 5, n_runs = 1, n_pre_samples = 5, random_search = 1000, plot = True)
+BO.optimize(n_iters = 50, n_runs = 1, n_pre_samples = 5, random_search = 1000, plot = False)
 for a in range(BO.n_workers):
     print("Predicted max {}: {}".format(a, BO.pre_max[a]))

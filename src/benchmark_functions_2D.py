@@ -76,3 +76,8 @@ class Disk:
     def __init__(self):
         self.domain = np.array([[-5, 10], [0, 15]])
         self.function = lambda x: -(np.square(x[0] - 2.5) + np.square((x[1] - 7.5))) + 7.5 ** 2
+
+if __name__ == '__main__':
+    branin = Branin()
+    fun = lambda x: branin.function(x)
+    print(fun(branin.arg_min[1]))

@@ -824,7 +824,10 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                                                         alpha=self.alpha,
                                                         n_restarts_optimizer=10)
                                                         for i in range(self.n_workers) ]
-            self.cstr_model = self.model.copy()
+            self.cstr_model = [GaussianProcessRegressor(  kernel=self.kernel,
+                                                        alpha=self.alpha,
+                                                        n_restarts_optimizer=10)
+                                                        for i in range(self.n_workers) ]
 
             # Initial data
             if x0 is None:
@@ -871,6 +874,7 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                         self.cstr_Y[a].append(self.cstr(self._next_query[a]))
                         self.X_train[a].append(self._next_query[a])
                         self.obj_Y_train[a].append(self.objective(self._next_query[a]))
+                        self.cstr_Y_train[a].append(self.cstr(self._next_query[a]))
 
                         X = self.X[a]
                         obj_Y = self.obj_Y[a]
@@ -970,7 +974,7 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             cstr_prob[sigma == 0.0] = 1.0
         cstr_weighted_expected_improvement = np.multiply(expected_improvement, cstr_prob)
 
-        return -1 * cstr_weighted_expected_improvement
+        return -1 * cstr_weighted_expected_improvement # temperol settings
 
     def _plot_iteration(self, iter, plot_iter):
         """
@@ -978,21 +982,187 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
         """
         mu = []
         std = []
+        cstr_mu = []
+        cstr_std = []
         for a in range(self.n_workers):
             mu_a, std_a = self.model[a].predict(self._grid, return_std=True)
             mu.append(mu_a)
             std.append(std_a)
+            cstr_mu_a, cstr_std_a = self.cstr_model[a].predict(self._grid, return_std=True)
+            cstr_mu.append(cstr_mu_a)
+            cstr_std.append(cstr_std_a)
             acq = [-1 * self._acquisition_evaluations[a][iter//plot_iter] for a in range(self.n_workers)]
 
         for a in range(self.n_workers):
             mu[a] = self.scaler[a][0].inverse_transform(mu[a].reshape(-1, 1))
             std[a] = self.scaler[a][0].scale_ * std[a]
+            cstr_mu[a] = self.scaler[a][1].inverse_transform(cstr_mu[a].reshape(-1, 1))
+            cstr_std[a] = self.scaler[a][1].scale_ * cstr_std[a]
 
         if self._dim == 1:
             self._plot_1d(iter, mu, std, acq)
         elif self._dim == 2:
-            self._plot_2d(iter, mu, acq)
+            self._plot_2d(iter, mu, cstr_mu, acq)
         else:
             print("Can't plot for higher dimensional problems.")
+
+    def _plot_2d(self, iter, mu, cstr_mu, acq):
+
+        cmap = cm.get_cmap('jet')
+        rgba = [cmap(i) for i in np.linspace(0,1,self.n_workers)]
+        if self.n_workers == 1:
+            rgba = ['k']
+
+        class ScalarFormatterForceFormat(ticker.ScalarFormatter):
+            def _set_format(self):
+                self.format = "%1.2f"
+        fmt = ScalarFormatterForceFormat()
+        fmt.set_powerlimits((0,0))
+        fmt.useMathText = True
+
+        x = np.array(self.X)
+        y = np.array(self.obj_Y)
+
+        first_param_grid = np.linspace(self.domain[0,0], self.domain[0,1], self._grid_density)
+        second_param_grid = np.linspace(self.domain[1,0], self.domain[1,1], self._grid_density)
+        X, Y = np.meshgrid(first_param_grid, second_param_grid, indexing='ij')
+
+        for a in range(self.n_workers):
+
+            fig, ax = plt.subplots(4, 1, figsize=(10,10), sharex=True, sharey=True)
+            (ax1, ax2, ax2b, ax3) = ax
+            plt.setp(ax.flat, aspect=1.0, adjustable='box')
+
+            N = 100
+            # Objective plot
+            Y_obj = [self.objective(i) for i in self._grid]
+            clev1 = np.linspace(min(Y_obj), max(Y_obj),N)
+            cp1 = ax1.contourf(X, Y, np.array(Y_obj).reshape(X.shape), clev1,  cmap = cm.coolwarm)
+            for c in cp1.collections:
+                c.set_edgecolor("face")
+            cbar1 = plt.colorbar(cp1, ax=ax1, shrink = 0.9, format=fmt, pad = 0.05)
+            cbar1.ax.tick_params(labelsize=10)
+            cbar1.ax.locator_params(nbins=5)
+            ax1.autoscale(False)
+            ax1.scatter(x[a][:, 0], x[a][:, 1], zorder=1, color = rgba[a], s = 10)
+            ax1.axvline(self._next_query[a][0], color='k', linewidth=1)
+            ax1.axhline(self._next_query[a][1], color='k', linewidth=1)
+            ax1.set_ylabel("y", fontsize = 10, rotation=0)
+            leg1 = ax1.legend(['Objective'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            ax1.add_artist(leg1)
+            ax1.set_xlim([first_param_grid[0], first_param_grid[-1]])
+            ax1.set_ylim([second_param_grid[0], second_param_grid[-1]])
+            ax1.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
+            ax1.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
+            plt.setp(ax1.get_yticklabels()[0], visible=False)
+            ax1.tick_params(axis='both', which='both', labelsize=10)
+            ax1.scatter(self.arg_max[:,0], self.arg_max[:,1], marker='x', c='gold', s=30)
+
+            if self.n_workers > 1:
+                ax1.legend(["Iteration %d" % (iter), "Agent %d" % (a)], fontsize = 10, loc='upper left', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            else:
+                ax1.legend(["Iteration %d" % (iter)], fontsize = 10, loc='upper left', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+
+            # Surrogate plot
+            d = 0
+            if mu[a].reshape(X.shape).max() - mu[a].reshape(X.shape).min() == 0:
+                d = acq[a].reshape(X.shape).max()*0.1
+            clev2 = np.linspace(mu[a].reshape(X.shape).min() - d, mu[a].reshape(X.shape).max() + d,N)
+            cp2 = ax2.contourf(X, Y, mu[a].reshape(X.shape), clev2,  cmap = cm.coolwarm)
+            for c in cp2.collections:
+                c.set_edgecolor("face")
+            cbar2 = plt.colorbar(cp2, ax=ax2, shrink = 0.9, format=fmt, pad = 0.05)
+            cbar2.ax.tick_params(labelsize=10)
+            cbar2.ax.locator_params(nbins=5)
+            ax2.autoscale(False)
+            ax2.scatter(x[a][:, 0], x[a][:, 1], zorder=1, color = rgba[a], s = 10)
+            ax2.axvline(self._next_query[a][0], color='k', linewidth=1)
+            ax2.axhline(self._next_query[a][1], color='k', linewidth=1)
+            ax2.set_ylabel("y", fontsize = 10, rotation=0)
+            ax2.legend(['Surrogate'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            ax2.set_xlim([first_param_grid[0], first_param_grid[-1]])
+            ax2.set_ylim([second_param_grid[0], second_param_grid[-1]])
+            ax2.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
+            ax2.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
+            plt.setp(ax2.get_yticklabels()[0], visible=False)
+            plt.setp(ax2.get_yticklabels()[-1], visible=False)
+            ax2.tick_params(axis='both', which='both', labelsize=10)
+
+            # Constraint surrogate plot
+            d = 0
+            if cstr_mu[a].reshape(X.shape).max() - cstr_mu[a].reshape(X.shape).min() == 0:
+                d = acq[a].reshape(X.shape).max() * 0.1
+            clev2 = np.linspace(cstr_mu[a].reshape(X.shape).min() - d, cstr_mu[a].reshape(X.shape).max() + d, N)
+            cp2 = ax2b.contourf(X, Y, cstr_mu[a].reshape(X.shape), clev2, cmap=cm.coolwarm)
+            for c in cp2.collections:
+                c.set_edgecolor("face")
+            cbar2 = plt.colorbar(cp2, ax=ax2b, shrink=0.9, format=fmt, pad=0.05)
+            cbar2.ax.tick_params(labelsize=10)
+            cbar2.ax.locator_params(nbins=5)
+            ax2b.autoscale(False)
+            ax2b.scatter(x[a][:, 0], x[a][:, 1], zorder=1, color=rgba[a], s=10)
+            ax2b.axvline(self._next_query[a][0], color='k', linewidth=1)
+            ax2b.axhline(self._next_query[a][1], color='k', linewidth=1)
+            ax2b.set_ylabel("y", fontsize=10, rotation=0)
+            ax2b.legend(['Constraint surrogate'], fontsize=10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True,
+                       framealpha=0.2)
+            ax2b.set_xlim([first_param_grid[0], first_param_grid[-1]])
+            ax2b.set_ylim([second_param_grid[0], second_param_grid[-1]])
+            ax2b.set_xticks(np.linspace(first_param_grid[0], first_param_grid[-1], 5))
+            ax2b.set_yticks(np.linspace(second_param_grid[0], second_param_grid[-1], 5))
+            plt.setp(ax2b.get_yticklabels()[0], visible=False)
+            plt.setp(ax2b.get_yticklabels()[-1], visible=False)
+            ax2b.tick_params(axis='both', which='both', labelsize=10)
+
+            # Broadcasted data
+            for transmitter in range(self.n_workers):
+                x_bc = []
+                for (xbc,ybc) in self._prev_bc_data[transmitter][a]:
+                    x_bc = np.append(x_bc,xbc).reshape(-1, self._dim)
+                x_bc = np.array(x_bc)
+                if x_bc.shape[0]>0:
+                    ax1.scatter(x_bc[:, 0], x_bc[:, 1], zorder=1, color = rgba[transmitter], s = 10)
+                    ax2.scatter(x_bc[:, 0], x_bc[:, 1], zorder=1, color = rgba[transmitter], s = 10)
+
+            # Acquisition function contour plot
+            d = 0
+            if acq[a].reshape(X.shape).max() - acq[a].reshape(X.shape).min() == 0.0:
+                d = acq[a].reshape(X.shape).max()*0.1
+                d = 10**(-100)
+                print("iter:{}, min:{:.3e}, max: {:.3e}".format(iter, acq[a].reshape(X.shape).min(), acq[a].reshape(X.shape).max()))
+            clev3 = np.linspace(acq[a].reshape(X.shape).min() - d, acq[a].reshape(X.shape).max() + d,N)
+            # print("iter:{}, coutour level: {:.3e}".format(float(iter), d))
+            cp3 = ax3.contourf(X, Y, acq[a].reshape(X.shape), clev3, cmap = cm.coolwarm)
+            cbar3 = plt.colorbar(cp3, ax=ax3, shrink = 0.9, format=fmt, pad = 0.05)
+            for c in cp3.collections:
+                c.set_edgecolor("face")
+            cbar3.ax.locator_params(nbins=5)
+            cbar3.ax.tick_params(labelsize=10)
+            ax3.autoscale(False)
+            ax3.axvline(self._next_query[a][0], color='k', linewidth=1)
+            ax3.axhline(self._next_query[a][1], color='k', linewidth=1)
+            ax3.set_xlabel("x", fontsize = 10)
+            ax3.set_ylabel("y", fontsize = 10, rotation=0)
+            ax3.legend(['Acquisition'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            ax3.set_xlim([first_param_grid[0], first_param_grid[-1]])
+            ax3.set_ylim([second_param_grid[0], second_param_grid[-1]])
+            ax3.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
+            ax3.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
+            plt.setp(ax3.get_yticklabels()[-1], visible=False)
+            ax3.tick_params(axis='both', which='both', labelsize=10)
+
+            ax1.tick_params(axis='both', which='major', labelsize=10)
+            ax1.tick_params(axis='both', which='minor', labelsize=10)
+            ax2.tick_params(axis='both', which='major', labelsize=10)
+            ax2.tick_params(axis='both', which='minor', labelsize=10)
+            ax3.tick_params(axis='both', which='major', labelsize=10)
+            ax3.tick_params(axis='both', which='minor', labelsize=10)
+            ax1.yaxis.offsetText.set_fontsize(10)
+            ax2.yaxis.offsetText.set_fontsize(10)
+            ax3.yaxis.offsetText.set_fontsize(10)
+
+            fig.subplots_adjust(wspace=0, hspace=0)
+            plt.savefig(self._PDF_DIR_ + '/bo_iteration_%d_agent_%d.pdf' % (iter, a), bbox_inches='tight')
+            plt.savefig(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d.png' % (iter, a), bbox_inches='tight')
 
 
