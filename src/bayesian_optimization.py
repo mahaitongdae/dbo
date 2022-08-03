@@ -976,6 +976,68 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
 
         return -1 * cstr_weighted_expected_improvement # temperol settings
 
+    def _expected_acquisition(self, a, x):
+
+        x = x.reshape(-1, self._dim)
+
+        # Pending queries
+        x_p = []
+        for neighbour_agent, neighbour in enumerate(self.network[a]):
+            if neighbour and neighbour_agent < a:
+                x_p.append(self._next_query[neighbour_agent])
+        x_p = np.array(x_p).reshape(-1, self._dim)
+
+        if not x_p.shape[0]:
+            return self._acquisition_function(a, x)
+        else:
+            # Sample fantasies
+            rng = check_random_state(0)
+            mu, cov = self.model[a].predict(x_p, return_cov=True)
+            mu = self.scaler[a][0].inverse_transform(mu)
+            cov = self.scaler[a][0].scale_**2 * cov
+            if mu.ndim == 1:
+                y_fantasies = rng.multivariate_normal(mu, cov, self._num_fantasies).T
+            else:
+                y_fantasies = [rng.multivariate_normal(mu[:, i], cov, self._num_fantasies).T[:, np.newaxis] for i in range(mu.shape[1])]
+                y_fantasies = np.hstack(y_fantasies)
+
+            # models for fantasies
+            fantasy_models = [GaussianProcessRegressor( kernel=self.kernel,
+                                                        alpha=self.alpha,
+                                                        optimizer=None)
+                                                        for i in range(self._num_fantasies) ]
+
+            # acquisition over fantasies
+            fantasy_acquisition = np.zeros((x.shape[0], self._num_fantasies))
+            for i in range(self._num_fantasies):
+
+                f_X_train = self.X_train[a][:]
+                f_y_train = self.obj_Y_train[a][:]
+
+                fantasy_scaler = StandardScaler()
+                fantasy_scaler.fit(np.array(f_y_train).reshape(-1, 1))
+
+                # add fantasy data
+                for xf,yf in zip(x_p, y_fantasies[:,0,i]):
+                    f_X_train = np.append(f_X_train, xf).reshape(-1, self._dim)
+                    f_y_train = np.append(f_y_train, yf).reshape(-1, 1)
+
+                # fit fantasy surrogate
+                f_y_train = fantasy_scaler.transform(f_y_train)
+                fantasy_models[i].fit(f_X_train, f_y_train)
+
+                # calculate acqusition
+                acquisition = self._acquisition_function(a,x,fantasy_models[i])
+                for j in range(x.shape[0]):
+                    fantasy_acquisition[:,i] = acquisition
+
+            # compute expected acquisition
+            expected_acquisition = np.zeros(x.shape[0])
+            for j in range(x.shape[0]):
+                expected_acquisition[j] = np.mean(fantasy_acquisition[j,:])
+
+        return expected_acquisition
+
     def _plot_iteration(self, iter, plot_iter):
         """
         Plots the surrogate and acquisition function.
@@ -1164,5 +1226,7 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             fig.subplots_adjust(wspace=0, hspace=0)
             plt.savefig(self._PDF_DIR_ + '/bo_iteration_%d_agent_%d.pdf' % (iter, a), bbox_inches='tight')
             plt.savefig(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d.png' % (iter, a), bbox_inches='tight')
+
+
 
 

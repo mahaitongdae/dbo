@@ -29,7 +29,7 @@ BO = BeyesianOptimizationWithCstr( objective = obj_fun,
                                    kernel= kernels.Matern(length_scale=(1, 1000.0)),
                                     acquisition_function = 'ei',
                                     policy = 'greedy',
-                                    fantasies = 0,
+                                    fantasies = 1,
                                     regularization = None,
                                     regularization_strength = 0.01,
                                     grid_density = 30)
