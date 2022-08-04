@@ -15,8 +15,9 @@ disk = Disk()
 cstr_fun = lambda x: disk.function(x)
 
 # Communication network
-N = np.eye(3)
-N[0,1] = N[1,0] = N[1,2] = N[2,1] = 1
+# N = np.eye(3)
+# N[0,1] = N[1,0] = N[1,2] = N[2,1] = 1
+N = np.ones([1,1])
 
 # Bayesian optimization object
 BO = BeyesianOptimizationWithCstr( objective = obj_fun,
@@ -29,7 +30,7 @@ BO = BeyesianOptimizationWithCstr( objective = obj_fun,
                                    kernel= kernels.Matern(length_scale=(1, 1000.0)),
                                     acquisition_function = 'ei',
                                     policy = 'greedy',
-                                    fantasies = 1,
+                                    fantasies = 0,
                                     regularization = None,
                                     regularization_strength = 0.01,
                                     grid_density = 30)

@@ -903,8 +903,9 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                     if np.any(np.abs(x - self.model[a].X_train_) <= 10**(-7)):
                         x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
 
-                    # Broadcast data to neighbours
-                    self._broadcast(a,x,np.array((self.objective(x), self.cstr(x))))
+                    if self.network.shape[0] > 1:
+                        # Broadcast data to neighbours
+                        self._broadcast(a,x,np.array((self.objective(x), self.cstr(x))))
 
                 # Calculate regret
                 self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.obj_Y_train for y_max in y_a]))
@@ -993,19 +994,32 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             # Sample fantasies
             rng = check_random_state(0)
             mu, cov = self.model[a].predict(x_p, return_cov=True)
-            mu = self.scaler[a][0].inverse_transform(mu)
+            mu = self.scaler[a][0].inverse_transform(mu.reshape(-1, 1))
             cov = self.scaler[a][0].scale_**2 * cov
+            cstr_mu, cstr_cov = self.cstr_model[a].predict(x_p, return_cov=True)
+            cstr_mu = self.scaler[a][1].inverse_transform(cstr_mu.reshape(-1, 1))
+            cstr_cov = self.scaler[a][1].scale_ ** 2 * cstr_cov
             if mu.ndim == 1:
                 y_fantasies = rng.multivariate_normal(mu, cov, self._num_fantasies).T
             else:
                 y_fantasies = [rng.multivariate_normal(mu[:, i], cov, self._num_fantasies).T[:, np.newaxis] for i in range(mu.shape[1])]
                 y_fantasies = np.hstack(y_fantasies)
 
+            if mu.ndim == 1:
+                cstr_y_fantasies = rng.multivariate_normal(cstr_mu, cstr_cov, self._num_fantasies).T
+            else:
+                cstr_y_fantasies = [rng.multivariate_normal(cstr_mu[:, i], cstr_cov, self._num_fantasies).T[:, np.newaxis] for i in range(mu.shape[1])]
+                cstr_y_fantasies = np.hstack(cstr_y_fantasies)
+
             # models for fantasies
             fantasy_models = [GaussianProcessRegressor( kernel=self.kernel,
                                                         alpha=self.alpha,
                                                         optimizer=None)
                                                         for i in range(self._num_fantasies) ]
+            cstr_fantasy_models = [GaussianProcessRegressor(kernel=self.kernel,
+                                                       alpha=self.alpha,
+                                                       optimizer=None)
+                              for i in range(self._num_fantasies)]
 
             # acquisition over fantasies
             fantasy_acquisition = np.zeros((x.shape[0], self._num_fantasies))
@@ -1013,21 +1027,26 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
 
                 f_X_train = self.X_train[a][:]
                 f_y_train = self.obj_Y_train[a][:]
+                f_cstr_y_train = self.cstr_Y_train[a][:]
 
-                fantasy_scaler = StandardScaler()
-                fantasy_scaler.fit(np.array(f_y_train).reshape(-1, 1))
+                fantasy_scaler = [StandardScaler(), StandardScaler()]
+                fantasy_scaler[0].fit(np.array(f_y_train).reshape(-1, 1)) # here is fit, not fit and transform
+                fantasy_scaler[1].fit(np.array(f_cstr_y_train).reshape(-1, 1))
 
                 # add fantasy data
-                for xf,yf in zip(x_p, y_fantasies[:,0,i]):
+                for xf,yf,cstr_yf in zip(x_p, y_fantasies[:,0,i], cstr_y_fantasies[:,0,i]):
                     f_X_train = np.append(f_X_train, xf).reshape(-1, self._dim)
                     f_y_train = np.append(f_y_train, yf).reshape(-1, 1)
+                    f_cstr_y_train = np.append(f_cstr_y_train, cstr_yf).reshape(-1, 1)
 
                 # fit fantasy surrogate
-                f_y_train = fantasy_scaler.transform(f_y_train)
+                f_y_train = fantasy_scaler[0].transform(f_y_train)
                 fantasy_models[i].fit(f_X_train, f_y_train)
+                f_cstr_y_train = fantasy_scaler[1].transform(f_cstr_y_train)
+                cstr_fantasy_models[i].fit(f_X_train, f_cstr_y_train)
 
                 # calculate acqusition
-                acquisition = self._acquisition_function(a,x,fantasy_models[i])
+                acquisition = self._acquisition_function(a, x, fantasy_models[i], cstr_fantasy_models[i])
                 for j in range(x.shape[0]):
                     fantasy_acquisition[:,i] = acquisition
 
