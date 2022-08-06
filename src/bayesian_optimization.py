@@ -1112,9 +1112,10 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
 
         for a in range(self.n_workers):
 
-            fig, ax = plt.subplots(4, 1, figsize=(10,10), sharex=True, sharey=True)
-            (ax1, ax2, ax2b, ax3) = ax
+            fig, ax = plt.subplots(2, 2, figsize=(10,10), sharex=True, sharey=True)
+            ax1, ax2, ax2b, ax3 = ax[0, 0], ax[0, 1], ax[1, 0], ax[1, 1]
             plt.setp(ax.flat, aspect=1.0, adjustable='box')
+            constraint_circle = plt.Circle((2.5, 7.5), radius=7.5, facecolor=None, edgecolor='red', fill=False, linestyle='--')
 
             N = 100
             # Objective plot
@@ -1162,13 +1163,13 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             ax2.axvline(self._next_query[a][0], color='k', linewidth=1)
             ax2.axhline(self._next_query[a][1], color='k', linewidth=1)
             ax2.set_ylabel("y", fontsize = 10, rotation=0)
-            ax2.legend(['Surrogate'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            # ax2.legend(['Surrogate'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
             ax2.set_xlim([first_param_grid[0], first_param_grid[-1]])
             ax2.set_ylim([second_param_grid[0], second_param_grid[-1]])
             ax2.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
             ax2.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
-            plt.setp(ax2.get_yticklabels()[0], visible=False)
-            plt.setp(ax2.get_yticklabels()[-1], visible=False)
+            # plt.setp(ax2.get_yticklabels()[0], visible=False)
+            # plt.setp(ax2.get_yticklabels()[-1], visible=False)
             ax2.tick_params(axis='both', which='both', labelsize=10)
 
             # Constraint surrogate plot
@@ -1187,8 +1188,8 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             ax2b.axvline(self._next_query[a][0], color='k', linewidth=1)
             ax2b.axhline(self._next_query[a][1], color='k', linewidth=1)
             ax2b.set_ylabel("y", fontsize=10, rotation=0)
-            ax2b.legend(['Constraint surrogate'], fontsize=10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True,
-                       framealpha=0.2)
+            # ax2b.legend(['Constraint surrogate'], fontsize=10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True,
+            #            framealpha=0.2)
             ax2b.set_xlim([first_param_grid[0], first_param_grid[-1]])
             ax2b.set_ylim([second_param_grid[0], second_param_grid[-1]])
             ax2b.set_xticks(np.linspace(first_param_grid[0], first_param_grid[-1], 5))
@@ -1196,6 +1197,7 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             plt.setp(ax2b.get_yticklabels()[0], visible=False)
             plt.setp(ax2b.get_yticklabels()[-1], visible=False)
             ax2b.tick_params(axis='both', which='both', labelsize=10)
+            ax2b.add_patch(constraint_circle)
 
             # Broadcasted data
             for transmitter in range(self.n_workers):
@@ -1231,17 +1233,20 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             ax3.set_ylim([second_param_grid[0], second_param_grid[-1]])
             ax3.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
             ax3.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
-            plt.setp(ax3.get_yticklabels()[-1], visible=False)
+            # plt.setp(ax3.get_yticklabels()[-1], visible=False)
             ax3.tick_params(axis='both', which='both', labelsize=10)
 
             ax1.tick_params(axis='both', which='major', labelsize=10)
             ax1.tick_params(axis='both', which='minor', labelsize=10)
             ax2.tick_params(axis='both', which='major', labelsize=10)
             ax2.tick_params(axis='both', which='minor', labelsize=10)
+            ax2b.tick_params(axis='both', which='major', labelsize=10)
+            ax2b.tick_params(axis='both', which='minor', labelsize=10)
             ax3.tick_params(axis='both', which='major', labelsize=10)
             ax3.tick_params(axis='both', which='minor', labelsize=10)
             ax1.yaxis.offsetText.set_fontsize(10)
             ax2.yaxis.offsetText.set_fontsize(10)
+            ax2b.yaxis.offsetText.set_fontsize(10)
             ax3.yaxis.offsetText.set_fontsize(10)
 
             fig.subplots_adjust(wspace=0, hspace=0)
