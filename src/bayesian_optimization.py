@@ -1,6 +1,7 @@
 import os
 import csv
 import copy
+import json
 import imageio
 import datetime
 import warnings
@@ -137,6 +138,7 @@ class bayesian_optimization:
             writer = csv.writer(file, delimiter=',')
             for i in zip(*data):
                 writer.writerow(i)
+
         return
 
     def _ridge(self, x, center = 0):

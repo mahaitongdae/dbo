@@ -2,6 +2,7 @@ import numpy as np
 import sklearn.gaussian_process.kernels as kernels
 from src.bayesian_optimization import bayesian_optimization, BeyesianOptimizationWithCstr
 from src.benchmark_functions_2D import *
+import json
 
 # Set seed
 np.random.seed(0)
@@ -36,6 +37,6 @@ BO = BeyesianOptimizationWithCstr( objective = obj_fun,
                                     grid_density = 30)
 
 # Optimize
-BO.optimize(n_iters = 50, n_runs = 1, n_pre_samples = 5, random_search = 1000, plot = False)
+BO.optimize(n_iters = 50, n_runs = 1, n_pre_samples = 5, random_search = 1000, plot = 10)
 for a in range(BO.n_workers):
     print("Predicted max {}: {}".format(a, BO.pre_max[a]))
