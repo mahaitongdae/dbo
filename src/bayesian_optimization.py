@@ -110,11 +110,13 @@ class bayesian_optimization:
         self._PNG_DIR_ = os.path.join(self._FIG_DIR_, "png")
         self._PDF_DIR_ = os.path.join(self._FIG_DIR_, "pdf")
         self._GIF_DIR_ = os.path.join(self._FIG_DIR_, "gif")
-        for path in [self._TEMP_DIR_, self._DATA_DIR_, self._FIG_DIR_, self._PNG_DIR_, self._PDF_DIR_, self._GIF_DIR_]:
-            try:
-                os.makedirs(path)
-            except FileExistsError:
-                pass
+
+        ## todo: temprorally comment them for not creating more directories
+        # for path in [self._TEMP_DIR_, self._DATA_DIR_, self._FIG_DIR_, self._PNG_DIR_, self._PDF_DIR_, self._GIF_DIR_]:
+        #     try:
+        #         os.makedirs(path)
+        #     except FileExistsError:
+        #         pass
 
     def _regret(self, y):
         return self.objective(self.arg_max[0]) - y
@@ -782,13 +784,43 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
 
     def __init__(self, objective, cstr, domain, arg_max = None, n_workers = 1, network = None, kernel = kernels.RBF(), alpha=10**(-10),
                  acquisition_function = 'ei', policy = 'greedy', fantasies = 0, epsilon = 0.01, regularization = None,
-                 regularization_strength = None, pending_regularization = None, pending_regularization_strength = None, grid_density = 100):
+                 regularization_strength = None, pending_regularization = None, pending_regularization_strength = None, grid_density = 100, args={}):
         super(BeyesianOptimizationWithCstr, self).__init__(objective, domain, arg_max, n_workers, network, kernel, alpha,
                                                            acquisition_function, policy, fantasies, epsilon, regularization,
                                                            regularization_strength, pending_regularization, pending_regularization_strength, grid_density)
+        self.objective = lambda x: - objective.function(x)
+        self.cstr_func = lambda x: cstr.function(x)
         self.cstr = cstr
+        self.cstr.set_domain(objective)
         self.cstr_model = self.model.copy()
         self.scaler = [[StandardScaler(), StandardScaler()] for i in range(n_workers)]
+        self.args = args
+
+        if args.n_workers > 1:
+            if args.fantasies:
+                alg_mane = 'DMCA'
+            elif args.regularization is not None:
+                if args.pending_regularization is not None:
+                    alg_mane = 'DDR_tau'
+                else:
+                    alg_mane = 'DDR'
+            else:
+                alg_mane = 'DCWEI'
+        else:
+            alg_mane = 'SA'
+
+        self._TEMP_DIR_ = os.path.join(os.path.join(self._ROOT_DIR_, "temp"), self.args.objective)
+        self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_+alg_mane)
+        self._DATA_DIR_ = os.path.join(self._ID_DIR_, "data")
+        self._FIG_DIR_ = os.path.join(self._ID_DIR_, "fig")
+        self._PNG_DIR_ = os.path.join(self._FIG_DIR_, "png")
+        self._PDF_DIR_ = os.path.join(self._FIG_DIR_, "pdf")
+        self._GIF_DIR_ = os.path.join(self._FIG_DIR_, "gif")
+        for path in [self._TEMP_DIR_, self._DATA_DIR_, self._FIG_DIR_, self._PNG_DIR_, self._PDF_DIR_, self._GIF_DIR_]:
+            try:
+                os.makedirs(path)
+            except FileExistsError:
+                pass
 
 
     def optimize(self, n_iters, n_runs = 1, x0=None, n_pre_samples=5, random_search=100, plot = False):
@@ -837,14 +869,14 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                     for a in range(self.n_workers):
                         self.X[a].append(params)
                         self.obj_Y[a].append(self.objective(params))
-                        self.cstr_Y[a].append(self.cstr(params))
+                        self.cstr_Y[a].append(self.cstr_func(params))
             else:
                 # Change definition of x0 to be specfic for each agent
                 for params in x0:
                     for a in range(self.n_workers):
                         self.X[a].append(params)
                         self.obj_Y[a].append(self.objective(params))
-                        self.cstr_Y[a].append(self.cstr(params))
+                        self.cstr_Y[a].append(self.cstr_func(params))
             self._initial_data_size = len(self.obj_Y[0])
 
 
@@ -852,7 +884,7 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
 
                 # record step indicator
                 self._record_step = False
-                if plot and n_runs == 1:
+                if plot and run == 0:
                     if n == n_iters or not n % plot:
                         self._record_step = True
 
@@ -873,10 +905,10 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                     else:
                         self.X[a].append(self._next_query[a])
                         self.obj_Y[a].append(self.objective(self._next_query[a]))
-                        self.cstr_Y[a].append(self.cstr(self._next_query[a]))
+                        self.cstr_Y[a].append(self.cstr_func(self._next_query[a]))
                         self.X_train[a].append(self._next_query[a])
                         self.obj_Y_train[a].append(self.objective(self._next_query[a]))
-                        self.cstr_Y_train[a].append(self.cstr(self._next_query[a]))
+                        self.cstr_Y_train[a].append(self.cstr_func(self._next_query[a]))
 
                         X = self.X[a]
                         obj_Y = self.obj_Y[a]
@@ -907,7 +939,7 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
 
                     if self.network.shape[0] > 1:
                         # Broadcast data to neighbours
-                        self._broadcast(a,x,np.array((self.objective(x), self.cstr(x))))
+                        self._broadcast(a, x, np.array((self.objective(x), self.cstr_func(x))))
 
                 # Calculate regret
                 self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.obj_Y_train for y_max in y_a]))
@@ -978,6 +1010,8 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
         cstr_weighted_expected_improvement = np.multiply(expected_improvement, cstr_prob)
 
         return -1 * cstr_weighted_expected_improvement # temperol settings
+        # return -1 * cstr_prob
+        # return -1 * expected_improvement
 
     def _expected_acquisition(self, a, x):
 
@@ -1115,7 +1149,8 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             fig, ax = plt.subplots(2, 2, figsize=(10,10), sharex=True, sharey=True)
             ax1, ax2, ax2b, ax3 = ax[0, 0], ax[0, 1], ax[1, 0], ax[1, 1]
             plt.setp(ax.flat, aspect=1.0, adjustable='box')
-            constraint_circle = plt.Circle((2.5, 7.5), radius=7.5, facecolor=None, edgecolor='red', fill=False, linestyle='--')
+            constraint_circle = plt.Circle((self.cstr.center[0], self.cstr.center[1]), radius=self.cstr.radius,
+                                           facecolor=None, edgecolor='red', fill=False, linestyle='--')
 
             N = 100
             # Objective plot
@@ -1253,6 +1288,11 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             plt.savefig(self._PDF_DIR_ + '/bo_iteration_%d_agent_%d.pdf' % (iter, a), bbox_inches='tight')
             plt.savefig(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d.png' % (iter, a), bbox_inches='tight')
 
+    def _save_data(self, data, name):
+        with open(self._DATA_DIR_ + '/config.json', 'w', encoding='utf-8') as file:
+            json.dump(vars(self.args), file, ensure_ascii=False, indent=4)
+
+        super(BeyesianOptimizationWithCstr, self)._save_data(data, name)
 
 
 

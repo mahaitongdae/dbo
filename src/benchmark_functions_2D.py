@@ -75,7 +75,36 @@ class Branin:
 class Disk:
     def __init__(self):
         self.domain = np.array([[-5, 10], [0, 15]])
-        self.function = lambda x: -(np.square(x[0] - 2.5) + np.square((x[1] - 7.5))) + 7.5 ** 2
+        self.compute_disk()
+
+    def compute_disk(self):
+        center = np.mean(self.domain, axis=1)
+        radius = min(self.domain[0, 1] - self.domain[0, 0], self.domain[1, 1] - self.domain[1, 0]) / 2
+        self.function = lambda x: -(np.square(x[0] - center[0]) + np.square((x[1] - center[1]))) + radius ** 2
+        self.center = center
+        self.radius = radius
+
+    def set_domain(self, objective):
+        self.domain = objective.domain
+        self.compute_disk()
+
+class Plate:
+    def __init__(self):
+        self.domain = np.array([[-5, 10], [0, 15]])
+        self.compute_plate()
+
+    def compute_plate(self):
+        center = np.mean(self.domain, axis=1)
+        radius = min(self.domain[0, 1] - self.domain[0, 0], self.domain[1, 1] - self.domain[1, 0]) / 2
+        self.function = lambda x: np.where(-(np.square(x[0] - center[0]) + np.square(x[1] - center[1])) + radius ** 2, [1., -1.])
+        self.center = center
+        self.radius = radius
+
+    def set_domain(self, objective):
+        self.domain = objective.domain
+        self.compute_plate()
+
+
 
 if __name__ == '__main__':
     branin = Branin()
