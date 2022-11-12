@@ -42,6 +42,8 @@ class bayesian_optimization:
             self._acquisition_function = self._expected_improvement
         elif acquisition_function == 'ts':
             self._acquisition_function = self._thompson_sampling
+        elif acquisition_function == 'es':
+            self._acquisition_function = self._entropy_search_single
         else:
             print('Supported acquisition functions: ei, ts')
             return
@@ -97,7 +99,7 @@ class bayesian_optimization:
         self._acquisition_evaluations = [[] for i in range(n_workers)]
 
         # Directory setup
-        self._DT_ = datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+        self._DT_ = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
         self._ROOT_DIR_ = os.path.dirname(os.path.dirname( __main__.__file__ ))
         self._TEMP_DIR_ = os.path.join(self._ROOT_DIR_, "temp")
         self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_)
@@ -111,6 +113,8 @@ class bayesian_optimization:
                 os.makedirs(path)
             except FileExistsError:
                 pass
+
+        self.beta = None
 
     def _regret(self, y):
         return self.objective(self.arg_max[0]) - y
@@ -176,6 +180,36 @@ class bayesian_optimization:
                 mu = mu - Y_max*pending_reg
 
         return mu
+
+    def _entropy_search_single(self, a, x, model = None):
+        """
+        Entropy search acquisition function.
+        Args:
+            a: # agents
+            x: array-like, shape = [n_samples, n_hyperparams]
+            model:
+        """
+
+        x = x.reshape(-1, self._dim)
+
+        if model is None:
+            model = self.model[a]
+
+        if self.beta is None:
+            self.beta = 2.
+
+        mu, sigma = model.predict(x, return_std=True)
+        mu = np.squeeze(mu)
+        ucb = mu + self.beta * sigma
+        amaxucb = x[np.argmax(ucb)][np.newaxis, :]
+
+        _, cov = model.predict(np.vstack((x,amaxucb)), return_cov=True)
+        # _, var_amaxucb_x = model.predict(amaxucb[np.newaxis, :], return_cov=True)
+        cov_amaxucb_x, var_amaxucb_x = cov[:-1, -1], cov[-1, -1]
+
+        acq = 1 / var_amaxucb_x * cov_amaxucb_x ** 2
+        return acq
+
 
     def _expected_improvement(self, a, x, model = None):
         """

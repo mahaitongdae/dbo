@@ -13,17 +13,18 @@ obj_fun = lambda x: -1*fun.function(x)
 arg_max = fun.arg_min
 
 # Communication network
-N = np.eye(3)
-N[0,1] = N[1,0] = N[1,2] = N[2,1] = 1
+# N = np.eye(3)
+# N[0,1] = N[1,0] = N[1,2] = N[2,1] = 1
+N = np.eye(1)
 
 # Bayesian optimization object
 BO = bayesian_optimization( objective = obj_fun,
                             domain = domain,
                             arg_max = arg_max,
-                            n_workers = 3,
+                            n_workers = 1,
                             network = N,
                             kernel = kernels.RBF(length_scale_bounds=(1, 1000.0)),
-                            acquisition_function = 'ei',
+                            acquisition_function = 'es',
                             policy = 'greedy',
                             fantasies = 0,
                             regularization = None,
@@ -31,6 +32,6 @@ BO = bayesian_optimization( objective = obj_fun,
                             grid_density = 30)
 
 # Optimize
-BO.optimize(n_iters = 50, n_runs = 1, n_pre_samples = 5, random_search = 1000, plot = False)
+BO.optimize(n_iters = 50, n_runs = 1, n_pre_samples = 5, random_search = 1000, plot = True)
 for a in range(BO.n_workers):
     print("Predicted max {}: {}".format(a, BO.pre_max[a]))
