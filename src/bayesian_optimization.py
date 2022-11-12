@@ -2,7 +2,7 @@ import os
 import csv
 import copy
 import json
-import imageio
+import imageio.v2 as imageio
 import datetime
 import warnings
 import itertools
@@ -46,6 +46,8 @@ class bayesian_optimization:
             self._acquisition_function = self._expected_improvement
         elif acquisition_function == 'ts':
             self._acquisition_function = self._thompson_sampling
+        elif acquisition_function == 'es':
+            self._acquisition_function = self._entropy_search_single
         else:
             print('Supported acquisition functions: ei, ts')
             return
@@ -57,15 +59,17 @@ class bayesian_optimization:
         if regularization is not None:
             if regularization == 'ridge':
                 self._regularization = self._ridge
+            elif regularization == 'constant':
+                self._regularization = self._constant
             else:
-                print('Supported regularization functions: ridge')
+                print('Supported regularization functions: ridge,constant')
                 return
         self._pending_regularization = None
         if pending_regularization is not None:
             if pending_regularization == 'ridge':
                 self._pending_regularization = self._ridge
             else:
-                print('Supported pending_regularization functions: ridge')
+                print('Supported pending_regularization functions: ridge,constant')
                 return
 
         # Domain
@@ -117,6 +121,7 @@ class bayesian_optimization:
         #         os.makedirs(path)
         #     except FileExistsError:
         #         pass
+        self.beta = None
 
     def _regret(self, y):
         return self.objective(self.arg_max[0]) - y
@@ -145,6 +150,9 @@ class bayesian_optimization:
 
     def _ridge(self, x, center = 0):
         return np.linalg.norm(x - center)
+
+    def _constant(self, x, eta = 1.):
+        return eta*np.ones_like(x)
 
     def _regularize(self, x, a, mu, Y_max):
 
@@ -183,6 +191,39 @@ class bayesian_optimization:
                 mu = mu - Y_max*pending_reg
 
         return mu
+
+    def _entropy_search_single(self, a, x, n, model = None):
+        """
+        Entropy search acquisition function.
+        Args:
+            a: # agents
+            x: array-like, shape = [n_samples, n_hyperparams]
+            model:
+        """
+
+        x = x.reshape(-1, self._dim)
+
+        if model is None:
+            model = self.model[a]
+
+        # if self.beta is None:
+        #     self.beta = 2.
+        self.beta = 3 - 0.019 * n
+        print(self.beta)
+
+        mu, sigma = model.predict(x, return_std=True)
+        mu = np.squeeze(mu)
+        ucb = mu + self.beta * sigma
+        amaxucb = x[np.argmax(ucb)][np.newaxis, :]
+        self.amaxucb = amaxucb
+
+        # _, var_amaxucb_x = model.predict(amaxucb[np.newaxis, :], return_cov=True)
+        cov_amaxucb_x = np.asarray([model.predict(np.vstack((xi, amaxucb)), return_cov=True)[1][-1, 0] for xi in x])
+        var_amaxucb_x = model.predict(amaxucb, return_cov=True)[1].squeeze()
+
+        acq = 1 / (var_amaxucb_x + 1e-8) * cov_amaxucb_x ** 2
+        return -1 * acq
+
 
     def _expected_improvement(self, a, x, model = None):
         """
@@ -351,7 +392,7 @@ class bayesian_optimization:
             acq = - self._expected_acquisition(a, X)
         else:
             # Vanilla acquisition functions
-            acq = - self._acquisition_function(a, X)
+            acq = - self._acquisition_function(a, X, n)
 
         if self._record_step:
             self._acquisition_evaluations[a].append(-1*acq[0:self._grid.shape[0]])
@@ -796,21 +837,29 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
         self.scaler = [[StandardScaler(), StandardScaler()] for i in range(n_workers)]
         self.args = args
 
-        if args.n_workers > 1:
-            if args.fantasies:
-                alg_mane = 'DMCA'
-            elif args.regularization is not None:
-                if args.pending_regularization is not None:
-                    alg_mane = 'DDR_tau'
-                else:
-                    alg_mane = 'DDR'
+        if acquisition_function == 'es':
+            alg_name = 'ES'
+        elif args.fantasies:
+            alg_name = 'MCA'
+        elif args.regularization is not None:
+            if args.pending_regularization is not None:
+                alg_name = 'DR_tau'
             else:
-                alg_mane = 'DCWEI'
+                alg_name = 'DR'
         else:
-            alg_mane = 'SA'
+            if args.unconstrained:
+                alg_name = 'EI'
+            else:
+                alg_name = 'CWEI'
+
+        if args.n_workers > 1:
+            alg_name = 'MA-' + alg_name
+        else:
+            alg_name = 'SA-' + alg_name
+
 
         self._TEMP_DIR_ = os.path.join(os.path.join(self._ROOT_DIR_, "temp"), self.args.objective)
-        self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_+alg_mane)
+        self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_+alg_name)
         self._DATA_DIR_ = os.path.join(self._ID_DIR_, "data")
         self._FIG_DIR_ = os.path.join(self._ID_DIR_, "fig")
         self._PNG_DIR_ = os.path.join(self._FIG_DIR_, "png")
@@ -933,9 +982,9 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                     x = self._find_next_query(n, a, random_search)
                     self._next_query[a] = x
 
-                    # In case of a "duplicate", randomly sample next query point.
-                    if np.any(np.abs(x - self.model[a].X_train_) <= 10**(-7)):
-                        x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
+                    # # In case of a "duplicate", randomly sample next query point.
+                    # if np.any(np.abs(x - self.model[a].X_train_) <= 10**(-7)):
+                    #     x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
 
                     if self.network.shape[0] > 1:
                         # Broadcast data to neighbours
@@ -1009,7 +1058,10 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             cstr_prob[sigma == 0.0] = 1.0
         cstr_weighted_expected_improvement = np.multiply(expected_improvement, cstr_prob)
 
-        return -1 * cstr_weighted_expected_improvement # temperol settings
+        if self.args.unconstrained:
+            return -1 * expected_improvement
+        else:
+            return -1 * cstr_weighted_expected_improvement # temperol settings
         # return -1 * cstr_prob
         # return -1 * expected_improvement
 
@@ -1195,6 +1247,8 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
             cbar2.ax.locator_params(nbins=5)
             ax2.autoscale(False)
             ax2.scatter(x[a][:, 0], x[a][:, 1], zorder=1, color = rgba[a], s = 10)
+            ax2.scatter(self.amaxucb[0, 0], self.amaxucb[0, 1], marker='o', c='red', s=30)
+            ax2.scatter(self.arg_max[:, 0], self.arg_max[:, 1], marker='x', c='gold', s=30)
             ax2.axvline(self._next_query[a][0], color='k', linewidth=1)
             ax2.axhline(self._next_query[a][1], color='k', linewidth=1)
             ax2.set_ylabel("y", fontsize = 10, rotation=0)
@@ -1252,18 +1306,24 @@ class BeyesianOptimizationWithCstr(bayesian_optimization):
                 print("iter:{}, min:{:.3e}, max: {:.3e}".format(iter, acq[a].reshape(X.shape).min(), acq[a].reshape(X.shape).max()))
             clev3 = np.linspace(acq[a].reshape(X.shape).min() - d, acq[a].reshape(X.shape).max() + d,N)
             # print("iter:{}, coutour level: {:.3e}".format(float(iter), d))
-            cp3 = ax3.contourf(X, Y, acq[a].reshape(X.shape), clev3, cmap = cm.coolwarm)
-            cbar3 = plt.colorbar(cp3, ax=ax3, shrink = 0.9, format=fmt, pad = 0.05)
-            for c in cp3.collections:
-                c.set_edgecolor("face")
-            cbar3.ax.locator_params(nbins=5)
-            cbar3.ax.tick_params(labelsize=10)
+            try:
+                cp3 = ax3.contourf(X, Y, acq[a].reshape(X.shape), clev3, cmap = cm.coolwarm)
+                cbar3 = plt.colorbar(cp3, ax=ax3, shrink=0.9, format=fmt, pad=0.05)
+                for c in cp3.collections:
+                    c.set_edgecolor("face")
+                cbar3.ax.locator_params(nbins=5)
+                cbar3.ax.tick_params(labelsize=10)
+            except:
+                pass
             ax3.autoscale(False)
             ax3.axvline(self._next_query[a][0], color='k', linewidth=1)
             ax3.axhline(self._next_query[a][1], color='k', linewidth=1)
             ax3.set_xlabel("x", fontsize = 10)
             ax3.set_ylabel("y", fontsize = 10, rotation=0)
-            ax3.legend(['Acquisition'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            try:
+                ax3.legend(['Acquisition'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            except:
+                pass
             ax3.set_xlim([first_param_grid[0], first_param_grid[-1]])
             ax3.set_ylim([second_param_grid[0], second_param_grid[-1]])
             ax3.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
