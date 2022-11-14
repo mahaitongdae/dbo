@@ -49,7 +49,7 @@ else:
   arg_max = None
 
 # Bayesian optimization object
-BO = bayesian_optimization(objective = function_dict.get(args.objective).function,
+BO = bayesian_optimization(objective = function_dict.get(args.objective),
                               domain = function_dict.get(args.objective).domain,
                               arg_max = arg_max,
                               n_workers = args.n_workers,

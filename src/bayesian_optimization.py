@@ -32,7 +32,7 @@ class bayesian_optimization:
                  grid_density = 100, args=dict()):
 
         # Optimization setup
-        self.objective = objective
+        self.objective = lambda x: - objective.function(x)
         self.n_workers = n_workers
         if network is None:
             self.network = np.eye(n_workers)
