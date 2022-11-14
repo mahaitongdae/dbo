@@ -1,7 +1,8 @@
 import os
 import csv
 import copy
-import imageio
+import json
+import imageio.v2 as imageio
 import datetime
 import warnings
 import itertools
@@ -23,7 +24,12 @@ from sklearn.gaussian_process import kernels, GaussianProcessRegressor
 warnings.filterwarnings("ignore")
 
 class bayesian_optimization:
-    def __init__(self, objective, domain, arg_max = None, n_workers = 1, network = None, kernel = kernels.RBF(), alpha=10**(-10), acquisition_function = 'ei', policy = 'greedy', fantasies = 0, epsilon = 0.01, regularization = None, regularization_strength = None, pending_regularization = None, pending_regularization_strength = None, grid_density = 100):
+    def __init__(self, objective, domain, arg_max = None, n_workers = 1,
+                 network = None, kernel = kernels.RBF(), alpha=10**(-10),
+                 acquisition_function = 'ei', policy = 'greedy', fantasies = 0,
+                 epsilon = 0.01, regularization = None, regularization_strength = None,
+                 pending_regularization = None, pending_regularization_strength = None,
+                 grid_density = 100, args=dict()):
 
         # Optimization setup
         self.objective = objective
@@ -98,11 +104,34 @@ class bayesian_optimization:
         self.X = self.Y = None
         self._acquisition_evaluations = [[] for i in range(n_workers)]
 
-        # Directory setup
+        # file storage
+        self.args = args
         self._DT_ = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        self._ROOT_DIR_ = os.path.dirname(os.path.dirname( __main__.__file__ ))
-        self._TEMP_DIR_ = os.path.join(self._ROOT_DIR_, "temp")
-        self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_)
+        self._ROOT_DIR_ = os.path.dirname(os.path.dirname(__main__.__file__))
+
+        if acquisition_function == 'es':
+            alg_name = 'ES'
+        elif args.fantasies:
+            alg_name = 'MCA'
+        elif args.regularization is not None:
+            if args.pending_regularization is not None:
+                alg_name = 'DR_tau'
+            else:
+                alg_name = 'DR'
+        else:
+            if args.unconstrained:
+                alg_name = 'EI'
+            else:
+                alg_name = 'CWEI'
+
+        if args.n_workers > 1:
+            alg_name = 'MA-' + alg_name
+        else:
+            alg_name = 'SA-' + alg_name
+
+
+        self._TEMP_DIR_ = os.path.join(os.path.join(self._ROOT_DIR_, "result"), self.args.objective)
+        self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_+alg_name)
         self._DATA_DIR_ = os.path.join(self._ID_DIR_, "data")
         self._FIG_DIR_ = os.path.join(self._ID_DIR_, "fig")
         self._PNG_DIR_ = os.path.join(self._FIG_DIR_, "png")
@@ -113,6 +142,22 @@ class bayesian_optimization:
                 os.makedirs(path)
             except FileExistsError:
                 pass
+
+        # # Directory setup
+        # self._DT_ = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        # self._ROOT_DIR_ = os.path.dirname(os.path.dirname( __main__.__file__ ))
+        # self._TEMP_DIR_ = os.path.join(self._ROOT_DIR_, "temp")
+        # self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_)
+        # self._DATA_DIR_ = os.path.join(self._ID_DIR_, "data")
+        # self._FIG_DIR_ = os.path.join(self._ID_DIR_, "fig")
+        # self._PNG_DIR_ = os.path.join(self._FIG_DIR_, "png")
+        # self._PDF_DIR_ = os.path.join(self._FIG_DIR_, "pdf")
+        # self._GIF_DIR_ = os.path.join(self._FIG_DIR_, "gif")
+        # for path in [self._TEMP_DIR_, self._DATA_DIR_, self._FIG_DIR_, self._PNG_DIR_, self._PDF_DIR_, self._GIF_DIR_]:
+        #     try:
+        #         os.makedirs(path)
+        #     except FileExistsError:
+        #         pass
 
         self.beta = None
 
@@ -181,7 +226,7 @@ class bayesian_optimization:
 
         return mu
 
-    def _entropy_search_single(self, a, x, model = None):
+    def _entropy_search_single(self, a, x, n, model = None):
         """
         Entropy search acquisition function.
         Args:
@@ -195,20 +240,23 @@ class bayesian_optimization:
         if model is None:
             model = self.model[a]
 
-        if self.beta is None:
-            self.beta = 2.
+        # if self.beta is None:
+        #     self.beta = 2.
+        self.beta = 3 - 0.019 * n
+        print(self.beta)
 
         mu, sigma = model.predict(x, return_std=True)
         mu = np.squeeze(mu)
         ucb = mu + self.beta * sigma
         amaxucb = x[np.argmax(ucb)][np.newaxis, :]
+        self.amaxucb = amaxucb
 
-        _, cov = model.predict(np.vstack((x,amaxucb)), return_cov=True)
         # _, var_amaxucb_x = model.predict(amaxucb[np.newaxis, :], return_cov=True)
-        cov_amaxucb_x, var_amaxucb_x = cov[:-1, -1], cov[-1, -1]
+        cov_amaxucb_x = np.asarray([model.predict(np.vstack((xi, amaxucb)), return_cov=True)[1][-1, 0] for xi in x])
+        var_amaxucb_x = model.predict(amaxucb, return_cov=True)[1].squeeze()
 
-        acq = 1 / var_amaxucb_x * cov_amaxucb_x ** 2
-        return acq
+        acq = 1 / (var_amaxucb_x + 1e-8) * cov_amaxucb_x ** 2
+        return -1 * acq
 
 
     def _expected_improvement(self, a, x, model = None):
@@ -378,7 +426,7 @@ class bayesian_optimization:
             acq = - self._expected_acquisition(a, X)
         else:
             # Vanilla acquisition functions
-            acq = - self._acquisition_function(a, X)
+            acq = - self._acquisition_function(a, X, n)
 
         if self._record_step:
             self._acquisition_evaluations[a].append(-1*acq[0:self._grid.shape[0]])
@@ -544,7 +592,7 @@ class bayesian_optimization:
             acq = [-1 * self._acquisition_evaluations[a][iter//plot_iter] for a in range(self.n_workers)]
 
         for a in range(self.n_workers):
-            mu[a] = self.scaler[a].inverse_transform(mu[a])
+            mu[a] = self.scaler[a].inverse_transform(mu[a].reshape(-1, 1))
             std[a] = self.scaler[a].scale_ * std[a]
 
         if self._dim == 1:
@@ -685,6 +733,7 @@ class bayesian_optimization:
             cbar2.ax.locator_params(nbins=5)
             ax2.autoscale(False)
             ax2.scatter(x[a][:, 0], x[a][:, 1], zorder=1, color = rgba[a], s = 10)
+            ax2.scatter(self.amaxucb[0, 0], self.amaxucb[0, 1], marker='o', c='red', s=30)
             ax2.axvline(self._next_query[a][0], color='k', linewidth=1)
             ax2.axhline(self._next_query[a][1], color='k', linewidth=1)
             ax2.set_ylabel("y", fontsize = 10, rotation=0)

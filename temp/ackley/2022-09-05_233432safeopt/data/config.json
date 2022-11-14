@@ -1,0 +1,16 @@
+{
+    "objective": "ackley",
+    "constraint": "disk",
+    "n_workers": 3,
+    "kernel": "RBF",
+    "acquisition_function": "safeopt",
+    "policy": "greedy",
+    "fantasies": 0,
+    "regularization": null,
+    "regularization_strength": 0.01,
+    "pending_regularization": null,
+    "pending_regularization_strength": 0.01,
+    "grid_density": 30,
+    "n_iters": 50,
+    "n_runs": 3
+}
