@@ -10,36 +10,37 @@ import json
 
 
 # bird
-# result_dirs = ['temp/bird/2022-08-07_212717',
-#                'temp/bird/2022-08-07_235550',
-#                'temp/bird/2022-08-09_000753DMCA',
-#                'temp/bird/2022-08-08_004409',
-#                'temp/bird/2022-09-05_235606safeopt',
+# result_dirs = ['result/bird/2022-11-15_122602SA-EI',
+#                'result/bird/2022-11-15_122753SA-UCB',
+#                'result/bird/2022-11-15_122947SA-ES',
+#                'result/bird/2022-11-15_123336SA-EI',
+#                # 'temp/bird/2022-09-05_235606safeopt',
 #                # 'temp/bird/2022-09-19_235729SA-DR',
 #                # 'temp/bird/2022-09-20_000555SA-MCA',
-#                'temp/bird/2022-09-20_004634SA-safeopt']
+#                # 'temp/bird/2022-09-20_004634SA-safeopt'
+#                 ]
 # ackley
-result_dirs = ['temp/ackley/2022-09-06_105302DCWEI',
-               'temp/ackley/2022-09-06_103120DDR',
-               'temp/ackley/2022-09-06_103617DMCA',
-               'temp/ackley/2022-09-06_104312SA',
-               'temp/ackley/2022-09-06_105843safeopt',
-               # 'temp/ackley/2022-09-20_004736SA-MCA',
-               # 'temp/ackley/2022-09-20_010803SA-DR',
-               'temp/ackley/2022-09-20_004634SA-safeopt',
-               ]
+# result_dirs = ['result/ackley/2022-11-15_121541SA-UCB',
+#                'result/ackley/2022-11-15_121740SA-ES',
+#                'result/ackley/2022-11-15_122042SA-EI',
+#                # 'temp/ackley/2022-09-06_104312SA',
+#                # 'temp/ackley/2022-09-06_105843safeopt',
+#                # 'temp/ackley/2022-09-20_004736SA-MCA',
+#                # 'temp/ackley/2022-09-20_010803SA-DR',
+#                # 'temp/ackley/2022-09-20_004634SA-safeopt',
+#                ]
 
 # rosenbrock
-# result_dirs = ['temp/rosenbrock/2022-09-06_111814DCWEI',
-#                'temp/rosenbrock/2022-09-10_220027DDR',
-#                'temp/rosenbrock/2022-09-06_112232DMCA',
-#                'temp/rosenbrock/2022-09-10_230138SA-CWEI',
-#                'temp/rosenbrock/2022-09-06_103427safeopt',
-#                # 'temp/rosenbrock/2022-09-19_195718SA-MCA',
-#                # 'temp/rosenbrock/2022-09-19_201558SA-DR',
-#                'temp/rosenbrock/2022-09-19_234954SA-safeopt',
-#                # 'temp/rosenbrock/2022-09-12_122105EI',
-#                ]
+result_dirs = ['result/rosenbrock/2022-11-15_131336SA-EI',
+               'result/rosenbrock/2022-11-15_131508SA-ES',
+               'result/rosenbrock/2022-11-15_132309SA-UCB',
+               # 'temp/rosenbrock/2022-09-10_230138SA-CWEI',
+               # 'temp/rosenbrock/2022-09-06_103427safeopt',
+               # 'temp/rosenbrock/2022-09-19_195718SA-MCA',
+               # 'temp/rosenbrock/2022-09-19_201558SA-DR',
+               # 'temp/rosenbrock/2022-09-19_234954SA-safeopt',
+               # 'temp/rosenbrock/2022-09-12_122105EI',
+               ]
 
 
 # legends = ['distributed', 'regularized', 'expected', 'single_agent']
@@ -50,22 +51,28 @@ def _plot_regret(result_dir, x_axis = 'iter', log=False):
     file = os.path.join(file_dir,'data/data.csv')
     param = json.loads(open(os.path.join(file_dir,'data/config.json')).read())
     # identify legend
-    if param['fantasies']:
-        auto_legend = 'MCA'
-    elif param['regularization'] is not None:
-        auto_legend = 'DR'
-    elif param['acquisition_function'] == 'safeopt':
-        auto_legend = 'StageOpt'
+    if param['acquisition_function'] == 'ucb':
+        auto_legend = 'UCB'
+    elif param['acquisition_function'] == 'es':
+        auto_legend = 'ES'
+    elif param['acquisition_function'] == 'ts':
+        auto_legend = 'ES'
+    # elif param['fantasies']:
+    #     auto_legend = 'MCA'
+    # elif param['regularization'] is not None:
+    #     auto_legend = 'DR'
+    # elif param['acquisition_function'] == 'safeopt':
+    #     auto_legend = 'StageOpt'
     else:
         # if param['unconstrained']:
         #     auto_legend = 'EI'
         # else:
-        auto_legend = 'CWEI'
+        auto_legend = 'EI'
 
-    if param['n_workers'] > 1:
-        auto_legend = 'MA-' + auto_legend
-    else:
-        auto_legend = 'SA-' + auto_legend
+    # if param['n_workers'] > 1:
+    #     auto_legend = 'MA-' + auto_legend
+    # else:
+    #     auto_legend = 'SA-' + auto_legend
 
     # file = result_dir + '/data/data.csv'
     with open(file, 'r') as csvfile:
@@ -148,8 +155,8 @@ for x_axis in ['iter', 'interactions', 'dist']:
     root_dir = os.path.dirname(os.path.dirname(os.path.dirname( __main__.__file__ )))
     objective = result_dirs[0].split('/')[1]
     if use_log_scale:
-        plt.savefig(root_dir + '/temp/'+ objective +'/regret_log_' + x_axis + '.pdf', bbox_inches='tight')
-        plt.savefig(root_dir + '/temp/'+ objective +'/regret_log_' + x_axis + '.png', bbox_inches='tight')
+        plt.savefig(root_dir + '/result/'+ objective +'/regret_log_' + x_axis + '.pdf', bbox_inches='tight')
+        plt.savefig(root_dir + '/result/'+ objective +'/regret_log_' + x_axis + '.png', bbox_inches='tight')
     else:
-        plt.savefig(root_dir + '/temp/'+ objective +'/regret_' + x_axis + '.pdf', bbox_inches='tight')
-        plt.savefig(root_dir + '/temp/'+ objective +'/regret_' + x_axis + '.png', bbox_inches='tight')
+        plt.savefig(root_dir + '/result/'+ objective +'/regret_' + x_axis + '.pdf', bbox_inches='tight')
+        plt.savefig(root_dir + '/result/'+ objective +'/regret_' + x_axis + '.png', bbox_inches='tight')

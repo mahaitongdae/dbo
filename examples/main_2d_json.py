@@ -17,15 +17,15 @@ kernel_dict = {'RBF':kernels.RBF(), 'Matern':kernels.Matern()}
 # N = np.ones([1,1])
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--objective', type=str, default='bird')
+parser.add_argument('--objective', type=str, default='rosenbrock')
 parser.add_argument('--constraint', type=str, default='disk')
 # parser.add_argument('--arg_max', type=np.ndarray, default=None)
 parser.add_argument('--n_workers', type=int, default=1)
 parser.add_argument('--kernel', type=str, default='Matern')
-parser.add_argument('--acquisition_function', type=str, default='es')
+parser.add_argument('--acquisition_function', type=str, default='ucb')
 parser.add_argument('--policy', type=str, default='greedy')
 parser.add_argument('--unconstrained', type=bool, default=True)
-parser.add_argument('--decision_type', type=str, default='parallel')
+parser.add_argument('--decision_type', type=str, default='distributed')
 parser.add_argument('--fantasies', type=int, default=0)
 parser.add_argument('--regularization', type=str, default=None)
 parser.add_argument('--regularization_strength', type=float, default=0.01)
@@ -33,7 +33,7 @@ parser.add_argument('--pending_regularization', type=str, default=None)
 parser.add_argument('--pending_regularization_strength', type=float, default=0.01)
 parser.add_argument('--grid_density', type=int, default=30)
 parser.add_argument('--n_iters', type=int, default=50)
-parser.add_argument('--n_runs', type=int, default=1)
+parser.add_argument('--n_runs', type=int, default=5)
 args = parser.parse_args()
 if args.n_workers == 3:
     N = np.eye(3)
@@ -55,7 +55,6 @@ BO = bayesian_optimization(objective = function_dict.get(args.objective),
                               n_workers = args.n_workers,
                               network = N,
                               kernel = kernel_dict.get(args.kernel), # length_scale_bounds=(1, 1000.0) remove this greatly improve performance?
-                              # kernel= kernels.Matern(length_scale=(1, 1000.0)),
                               acquisition_function = args.acquisition_function,
                               policy = args.policy,
                               fantasies = args.fantasies,
@@ -67,6 +66,6 @@ BO = bayesian_optimization(objective = function_dict.get(args.objective),
                               args = args)
 
 # Optimize
-BO.optimize(n_iters = args.n_iters, n_runs = args.n_runs, n_pre_samples = 5, random_search = 1000, plot = False)
+BO.optimize(n_iters = args.n_iters, n_runs = args.n_runs, n_pre_samples = 5, random_search = 1000, plot = 30)
 for a in range(BO.n_workers):
     print("Predicted max {}: {}".format(a, BO.pre_max[a]))

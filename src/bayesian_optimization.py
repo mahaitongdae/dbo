@@ -50,8 +50,10 @@ class bayesian_optimization:
             self._acquisition_function = self._thompson_sampling
         elif acquisition_function == 'es':
             self._acquisition_function = self._entropy_search_single
+        elif acquisition_function == 'ucb':
+            self._acquisition_function = self._upper_confidential_bound
         else:
-            print('Supported acquisition functions: ei, ts')
+            print('Supported acquisition functions: ei, ts, es, ucb')
             return
         self._epsilon = epsilon
         self._num_fantasies = fantasies
@@ -111,6 +113,10 @@ class bayesian_optimization:
 
         if acquisition_function == 'es':
             alg_name = 'ES'
+
+        elif acquisition_function == 'ucb':
+            alg_name = 'UCB'
+
         elif args.fantasies:
             alg_name = 'MCA'
         elif args.regularization is not None:
@@ -179,6 +185,8 @@ class bayesian_optimization:
         return range(self._distance_traveled.shape[1]), d_mean, conf95
 
     def _save_data(self, data, name):
+        with open(self._DATA_DIR_ + '/config.json', 'w', encoding='utf-8') as file:
+            json.dump(vars(self.args), file, ensure_ascii=False, indent=4)
         with open(self._DATA_DIR_ + '/' + name + '.csv', 'w', newline='') as file:
             writer = csv.writer(file, delimiter=',')
             for i in zip(*data):
@@ -243,7 +251,7 @@ class bayesian_optimization:
         # if self.beta is None:
         #     self.beta = 2.
         self.beta = 3 - 0.019 * n
-        print(self.beta)
+        # print(self.beta)
 
         mu, sigma = model.predict(x, return_std=True)
         mu = np.squeeze(mu)
@@ -255,11 +263,43 @@ class bayesian_optimization:
         cov_amaxucb_x = np.asarray([model.predict(np.vstack((xi, amaxucb)), return_cov=True)[1][-1, 0] for xi in x])
         var_amaxucb_x = model.predict(amaxucb, return_cov=True)[1].squeeze()
 
-        acq = 1 / (var_amaxucb_x + 1e-8) * cov_amaxucb_x ** 2
+        acq = 1 / (var_amaxucb_x + 1) * cov_amaxucb_x ** 2
+        return -1 * acq
+
+    def _upper_confidential_bound(self, a, x, n, model = None):
+        """
+        Entropy search acquisition function.
+        Args:
+            a: # agents
+            x: array-like, shape = [n_samples, n_hyperparams]
+            model:
+        """
+
+        x = x.reshape(-1, self._dim)
+
+        if model is None:
+            model = self.model[a]
+
+        # if self.beta is None:
+        #     self.beta = 2.
+        self.beta = 0.15 + 0.019 * n
+        # print(self.beta)
+
+        mu, sigma = model.predict(x, return_std=True)
+        mu = np.squeeze(mu)
+        acq = mu + self.beta * sigma
+        amaxucb = x[np.argmax(acq)][np.newaxis, :]
+        self.amaxucb = amaxucb
+        #
+        # # _, var_amaxucb_x = model.predict(amaxucb[np.newaxis, :], return_cov=True)
+        # cov_amaxucb_x = np.asarray([model.predict(np.vstack((xi, amaxucb)), return_cov=True)[1][-1, 0] for xi in x])
+        # var_amaxucb_x = model.predict(amaxucb, return_cov=True)[1].squeeze()
+        #
+        # acq = 1 / (var_amaxucb_x + 1e-8) * cov_amaxucb_x ** 2
         return -1 * acq
 
 
-    def _expected_improvement(self, a, x, model = None):
+    def _expected_improvement(self, a, x, n, model = None):
         """
         Expected improvement acquisition function.
         Arguments:
@@ -287,7 +327,7 @@ class bayesian_optimization:
 
         return -1 * expected_improvement
 
-    def _thompson_sampling(self, a, x, model = None, num_samples = 1):
+    def _thompson_sampling(self, a, x, n, model = None, num_samples = 1):
         """
         Thompson sampling acquisition function.
         Arguments:
@@ -400,7 +440,7 @@ class bayesian_optimization:
             idx = np.random.choice(range(x.shape[0]))
         return x[idx]
 
-    def _find_next_query(self, n, a, random_search):
+    def _find_next_query(self, n, a, random_search, decision_type='distributed'):
         """
         Proposes the next query.
         Arguments:
@@ -422,23 +462,28 @@ class bayesian_optimization:
             X = np.append(self._grid, x).reshape(-1, self._dim)
 
         # Calculate acquisition function
-        if self._num_fantasies:
-            acq = - self._expected_acquisition(a, X)
+        if decision_type == 'distributed':
+            if self._num_fantasies:
+                acq = - self._expected_acquisition(a, X)
+            else:
+                # Vanilla acquisition functions
+                acq = - self._acquisition_function(a, X, n)
+
+
+            # Apply policy
+            if self._policy == 'boltzmann':
+                # Boltzmann Policy
+                x = self._blotzmann(n, x, acq)
+            else:
+                # Greedy Policy
+                x = X[np.argmax(acq), :]
+
         else:
-            # Vanilla acquisition functions
-            acq = - self._acquisition_function(a, X, n)
+            x = self._acquisition_function(a, X, n)
 
         if self._record_step:
             self._acquisition_evaluations[a].append(-1*acq[0:self._grid.shape[0]])
             acq = acq[self._grid.shape[0]:]
-
-        # Apply policy
-        if self._policy == 'boltzmann':
-            # Boltzmann Policy
-            x = self._blotzmann(n, x, acq)
-        else:
-            #Greedy Policy
-            x = x[np.argmax(acq), :]
 
         return x
 
@@ -463,6 +508,8 @@ class bayesian_optimization:
         self._distance_traveled = np.zeros((n_runs, n_iters+1))
 
         for run in tqdm(range(n_runs), position=0, leave = None, disable = not n_runs > 1):
+
+
 
             # Reset model and data before each run
             self._next_query = [[] for i in range(self.n_workers)]
@@ -503,44 +550,74 @@ class bayesian_optimization:
 
                 self._prev_bc_data = copy.deepcopy(self.bc_data)
 
-                for a in range(self.n_workers):
 
-                    # Updata data knowledge
-                    if n == 0:
-                        X = self.X[a]
-                        Y = self.Y[a]
-                        self.X_train[a] = self.X[a][:]
-                        self.Y_train[a] = self.Y[a][:]
-                    else:
-                        self.X[a].append(self._next_query[a])
-                        self.Y[a].append(self.objective(self._next_query[a]))
-                        self.X_train[a].append(self._next_query[a])
-                        self.Y_train[a].append(self.objective(self._next_query[a]))
+                if self.args.decision_type == 'distributed':
+                    for a in range(self.n_workers):
 
-                        X = self.X[a]
-                        Y = self.Y[a]
-                        for transmitter in range(self.n_workers):
-                            for (x,y) in self._prev_bc_data[transmitter][a]:
-                                X = np.append(X,x).reshape(-1, self._dim)
-                                Y = np.append(Y,y).reshape(-1, 1)
-                                self.X_train[a].append(x)
-                                self.Y_train[a].append(y)
+                        # Updata data knowledge
+                        if n == 0:
+                            X = self.X[a]
+                            Y = self.Y[a]
+                            self.X_train[a] = self.X[a][:]
+                            self.Y_train[a] = self.Y[a][:]
+                        else:
+                            self.X[a].append(self._next_query[a])
+                            self.Y[a].append(self.objective(self._next_query[a]))
+                            self.X_train[a].append(self._next_query[a])
+                            self.Y_train[a].append(self.objective(self._next_query[a]))
 
+                            X = self.X[a]
+                            Y = self.Y[a]
+                            for transmitter in range(self.n_workers):
+                                for (x,y) in self._prev_bc_data[transmitter][a]:
+                                    X = np.append(X,x).reshape(-1, self._dim)
+                                    Y = np.append(Y,y).reshape(-1, 1)
+                                    self.X_train[a].append(x)
+                                    self.Y_train[a].append(y)
+
+                        # Standardize
+                        Y = self.scaler[a].fit_transform(np.array(Y).reshape(-1, 1))
+                        # Fit surrogate
+                        self.model[a].fit(X, Y)
+
+                        # Find next query
+                        x = self._find_next_query(n, a, random_search)
+                        self._next_query[a] = x
+
+                        # # In case of a "duplicate", randomly sample next query point.
+                        # if np.any(np.abs(x - self.model[a].X_train_) <= 10**(-7)):
+                        #     x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
+
+                        # Broadcast data to neighbours
+                        self._broadcast(a,x,self.objective(x))
+
+                else:
+                    # parallel/centralized decision
+                    for a in range(self.n_workers):
+
+                        # Updata data knowledge
+                        if n == 0:
+                            X = self.X[a]
+                            Y = self.Y[a]
+                            self.X_train[a] = self.X[a][:]
+                            self.Y_train[a] = self.Y[a][:]
+                        else:
+                            self.X[a].append(self._next_query[a])
+                            self.Y[a].append(self.objective(self._next_query[a]))
+                            self.X_train[a].append(self._next_query[a])
+                            self.Y_train[a].append(self.objective(self._next_query[a]))
+
+                    X = np.vstack([self.X[a] for a in range(self.n_workers)])
+                    Y = np.vstack([self.Y[a] for a in range(self.n_workers)])
                     # Standardize
-                    Y = self.scaler[a].fit_transform(np.array(Y).reshape(-1, 1))
+                    Y = self.scaler[0].fit_transform(np.array(Y).reshape(-1, 1))
                     # Fit surrogate
-                    self.model[a].fit(X, Y)
+                    self.model[0].fit(X, Y)
 
                     # Find next query
-                    x = self._find_next_query(n, a, random_search)
-                    self._next_query[a] = x
+                    x = self._find_next_query(n, self.n_workers, random_search, decision_type='parallel')
+                    self._next_query = x
 
-                    # In case of a "duplicate", randomly sample next query point.
-                    if np.any(np.abs(x - self.model[a].X_train_) <= 10**(-7)):
-                        x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
-
-                    # Broadcast data to neighbours
-                    self._broadcast(a,x,self.objective(x))
 
                 # Calculate regret
                 self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.Y_train for y_max in y_a]))
@@ -686,7 +763,7 @@ class bayesian_optimization:
 
         for a in range(self.n_workers):
 
-            fig, ax = plt.subplots(3, 1, figsize=(10,10), sharex=True, sharey=True)
+            fig, ax = plt.subplots(1, 3, figsize=(10,4), sharey=True) # , sharex=True
             (ax1, ax2, ax3) = ax
             plt.setp(ax.flat, aspect=1.0, adjustable='box')
 
@@ -697,7 +774,7 @@ class bayesian_optimization:
             cp1 = ax1.contourf(X, Y, np.array(Y_obj).reshape(X.shape), clev1,  cmap = cm.coolwarm)
             for c in cp1.collections:
                 c.set_edgecolor("face")
-            cbar1 = plt.colorbar(cp1, ax=ax1, shrink = 0.9, format=fmt, pad = 0.05)
+            cbar1 = plt.colorbar(cp1, ax=ax1, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
             cbar1.ax.tick_params(labelsize=10)
             cbar1.ax.locator_params(nbins=5)
             ax1.autoscale(False)
@@ -728,12 +805,13 @@ class bayesian_optimization:
             cp2 = ax2.contourf(X, Y, mu[a].reshape(X.shape), clev2,  cmap = cm.coolwarm)
             for c in cp2.collections:
                 c.set_edgecolor("face")
-            cbar2 = plt.colorbar(cp2, ax=ax2, shrink = 0.9, format=fmt, pad = 0.05)
+            cbar2 = plt.colorbar(cp2, ax=ax2, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
             cbar2.ax.tick_params(labelsize=10)
             cbar2.ax.locator_params(nbins=5)
             ax2.autoscale(False)
             ax2.scatter(x[a][:, 0], x[a][:, 1], zorder=1, color = rgba[a], s = 10)
-            ax2.scatter(self.amaxucb[0, 0], self.amaxucb[0, 1], marker='o', c='red', s=30)
+            if self._acquisition_function in ['es', 'ucb']:
+                ax2.scatter(self.amaxucb[0, 0], self.amaxucb[0, 1], marker='o', c='red', s=30)
             ax2.axvline(self._next_query[a][0], color='k', linewidth=1)
             ax2.axhline(self._next_query[a][1], color='k', linewidth=1)
             ax2.set_ylabel("y", fontsize = 10, rotation=0)
@@ -742,8 +820,8 @@ class bayesian_optimization:
             ax2.set_ylim([second_param_grid[0], second_param_grid[-1]])
             ax2.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
             ax2.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
-            plt.setp(ax2.get_yticklabels()[0], visible=False)
-            plt.setp(ax2.get_yticklabels()[-1], visible=False)
+            # plt.setp(ax2.get_yticklabels()[0], visible=False)
+            # plt.setp(ax2.get_yticklabels()[-1], visible=False)
             ax2.tick_params(axis='both', which='both', labelsize=10)
 
             # Broadcasted data
@@ -763,7 +841,7 @@ class bayesian_optimization:
                 d = 10**(-100)
             clev3 = np.linspace(acq[a].reshape(X.shape).min() - d, acq[a].reshape(X.shape).max() + d,N)
             cp3 = ax3.contourf(X, Y, acq[a].reshape(X.shape), clev3, cmap = cm.coolwarm)
-            cbar3 = plt.colorbar(cp3, ax=ax3, shrink = 0.9, format=fmt, pad = 0.05)
+            cbar3 = plt.colorbar(cp3, ax=ax3, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
             for c in cp3.collections:
                 c.set_edgecolor("face")
             cbar3.ax.locator_params(nbins=5)
@@ -778,7 +856,7 @@ class bayesian_optimization:
             ax3.set_ylim([second_param_grid[0], second_param_grid[-1]])
             ax3.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
             ax3.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
-            plt.setp(ax3.get_yticklabels()[-1], visible=False)
+            # plt.setp(ax3.get_yticklabels()[-1], visible=False)
             ax3.tick_params(axis='both', which='both', labelsize=10)
 
             ax1.tick_params(axis='both', which='major', labelsize=10)
