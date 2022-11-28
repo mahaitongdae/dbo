@@ -50,8 +50,10 @@ class bayesian_optimization:
             self._acquisition_function = self._expected_improvement
         elif acquisition_function == 'ts':
             self._acquisition_function = self._thompson_sampling
-        elif acquisition_function == 'es':
+        elif acquisition_function == 'es' and args.decision_type == 'distributed':
             self._acquisition_function = self._entropy_search_single
+        elif acquisition_function == 'es':
+            self._acquisition_function = self._entropy_search_grad
         elif acquisition_function == 'ucb':
             self._acquisition_function = self._upper_confidential_bound
         else:
@@ -268,6 +270,52 @@ class bayesian_optimization:
         acq = 1 / (var_amaxucb_x + 1) * cov_amaxucb_x ** 2
         return -1 * acq
 
+    def _entropy_search_grad(self, x, n):
+        """
+                Entropy search acquisition function.
+                Args:
+                    a: # agents
+                    x: array-like, shape = [n_samples, n_hyperparams]
+                    n: agent nums
+                    model:
+                """
+
+        x = x.reshape(-1, self._dim)
+
+        # if self.beta is None:
+        #     self.beta = 2.
+        self.beta = 3 - 0.019 * n
+        # print(self.beta)
+
+        self.model.eval()
+        self.likelihood.eval()
+
+        mu, sigma = self.model.predict(x, return_std=True)
+        mu = np.squeeze(mu)
+        ucb = mu + self.beta * sigma
+        amaxucb = x[np.argmax(ucb.clone().detach().numpy())][np.newaxis, :]
+        self.amaxucb = amaxucb
+        x = np.vstack([amaxucb for _ in range(self.n_workers)])
+
+        x = torch.tensor(x)
+        optimizer = torch.optim.Adam(x, lr=0.1)
+        training_iter = 50
+        for i in range(training_iter):
+            optimizer.zero_grad()
+            joint_x = torch.vstack((x,torch.tensor(amaxucb).resize([-1 ,1])))
+            cov_x_xucb = self.model.predict(joint_x, return_cov=True)[1][:, :-1].reshape([-1,1])
+            cov_x_x = self.model.predict(x, return_cov=True)[1]
+            loss = -torch.matmul(torch.matmul(cov_x_xucb.T,cov_x_x), cov_x_xucb)
+            loss.backward()
+            print('Iter %d/%d - Loss: %.3f ' % (
+                i + 1, training_iter, loss.item(),
+                # model.covar_module.base_kernel.lengthscale.item(),
+                # model.likelihood.noise.item()
+            ))
+            optimizer.step()
+
+        return x.item()
+
     def _upper_confidential_bound(self, a, x, n, model = None):
         """
         Entropy search acquisition function.
@@ -481,7 +529,7 @@ class bayesian_optimization:
                 x = X[np.argmax(acq), :]
 
         else:
-            x = self._acquisition_function(a, X, n)
+            x = self._acquisition_function(X, n)
 
         if self._record_step:
             self._acquisition_evaluations[a].append(-1*acq[0:self._grid.shape[0]])
@@ -520,10 +568,7 @@ class bayesian_optimization:
             self.Y_train =[[] for i in range(self.n_workers)]
             self.X = [[] for i in range(self.n_workers)]
             self.Y = [[] for i in range(self.n_workers)]
-            self.model = [GaussianProcessRegressor(  kernel=self.kernel,
-                                                        alpha=self.alpha,
-                                                        n_restarts_optimizer=10)
-                                                        for i in range(self.n_workers) ]
+
 
             # Initial data
             if x0 is None:
@@ -538,6 +583,17 @@ class bayesian_optimization:
                         self.X[a].append(params)
                         self.Y[a].append(self.objective(params))
             self._initial_data_size = len(self.Y[0])
+
+            if self.args.acquisition_function == 'es' and self.args.decision_type == 'parallel':
+                self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
+                self.model = ExactGPModel(torch.tensor(self.X), torch.tensor(self.Y), self.likelihood)
+                self.model.train()
+                self.likelihood.train()
+            else:
+                self.model = [GaussianProcessRegressor(  kernel=self.kernel,
+                                                            alpha=self.alpha,
+                                                            n_restarts_optimizer=10)
+                                                            for i in range(self.n_workers) ]
 
 
             for n in tqdm(range(n_iters+1), position = n_runs > 1, leave = None):
@@ -580,7 +636,9 @@ class bayesian_optimization:
                         # Standardize
                         Y = self.scaler[a].fit_transform(np.array(Y).reshape(-1, 1))
                         # Fit surrogate
-                        self.model[a].fit(X, Y)
+                        self.model.fit(X, Y)
+                        self.model.train()
+                        self.likelihood.train()
 
                         # Find next query
                         x = self._find_next_query(n, a, random_search)
@@ -614,7 +672,7 @@ class bayesian_optimization:
                     # Standardize
                     Y = self.scaler[0].fit_transform(np.array(Y).reshape(-1, 1))
                     # Fit surrogate
-                    self.model[0].fit(X, Y)
+                    self.model.fit(X, Y)
 
                     # Find next query
                     x = self._find_next_query(n, self.n_workers, random_search, decision_type='parallel')
@@ -935,21 +993,48 @@ class bayesian_optimization:
                         except: pass
                 imageio.mimsave(self._GIF_DIR_ + '/bo_agent_%d.gif' % (a), plots, duration=1.0)
 
-class ExactGPModel(object):
+class ExactGPModel(gpytorch.models.ExactGP):
 
     def __init__(self, X, Y, likelihood):
-        self.model = gpytorch.models.ExactGP(X, Y, likelihood)
+        super(ExactGPModel, self).__init__(X, Y, likelihood)
+        # self.model = gpytorch.models.ExactGP(X, Y, self.likelihood)
+        self.mean_module = gpytorch.means.ConstantMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+    
+    # def _train(self):
+    #     self.model.train()
+    #     self.likelihood.train()
+
     def fit(self, X, Y):
-        self.model.set_train_data(X, Y)
+        if isinstance(X, np.ndarray):
+            X = torch.tensor(X)
+        if isinstance(Y, np.ndarray):
+            Y = torch.tensor(Y)
+        if len(X.shape) == 2:
+            X = X[np.newaxis, :, :]
+        if len(Y.shape) == 2:
+            Y = torch.squeeze(Y)[np.newaxis, :]
+        self.set_train_data(X, Y)
 
     def predict(self, X, return_std= False, return_cov = False):
-        f_pred = self.model(X)
+        # self.model.eval()
+        # self.likelihood.eval()
+        if isinstance(X, np.ndarray):
+            X = torch.tensor(X)
+        f_pred = self(X)
         if return_std:
             return f_pred.mean, f_pred.variance
         elif return_cov:
             return f_pred.mean, f_pred.covariance_matrix
         else:
             return f_pred.mean
+
+
 
 
 class BayesianOptimizationTorch(bayesian_optimization):
