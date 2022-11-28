@@ -270,7 +270,7 @@ class bayesian_optimization:
         acq = 1 / (var_amaxucb_x + 1) * cov_amaxucb_x ** 2
         return -1 * acq
 
-    def _entropy_search_grad(self, x, n):
+    def _entropy_search_grad(self, a, x, n):
         """
                 Entropy search acquisition function.
                 Args:
@@ -291,30 +291,28 @@ class bayesian_optimization:
         self.likelihood.eval()
 
         mu, sigma = self.model.predict(x, return_std=True)
-        mu = np.squeeze(mu)
+        # mu = np.squeeze(mu)
         ucb = mu + self.beta * sigma
         amaxucb = x[np.argmax(ucb.clone().detach().numpy())][np.newaxis, :]
         self.amaxucb = amaxucb
         x = np.vstack([amaxucb for _ in range(self.n_workers)])
 
-        x = torch.tensor(x)
-        optimizer = torch.optim.Adam(x, lr=0.1)
+        x = torch.tensor(x, requires_grad=True)
+        optimizer = torch.optim.Adam([x], lr=0.1)
         training_iter = 50
         for i in range(training_iter):
             optimizer.zero_grad()
-            joint_x = torch.vstack((x,torch.tensor(amaxucb).resize([-1 ,1])))
-            cov_x_xucb = self.model.predict(joint_x, return_cov=True)[1][:, :-1].reshape([-1,1])
+            joint_x = torch.vstack((x,torch.tensor(amaxucb)))
+            cov_x_xucb = self.model.predict(joint_x, return_cov=True)[1][-1, :-1].reshape([-1,1])
             cov_x_x = self.model.predict(x, return_cov=True)[1]
             loss = -torch.matmul(torch.matmul(cov_x_xucb.T,cov_x_x), cov_x_xucb)
             loss.backward()
-            print('Iter %d/%d - Loss: %.3f ' % (
-                i + 1, training_iter, loss.item(),
-                # model.covar_module.base_kernel.lengthscale.item(),
-                # model.likelihood.noise.item()
-            ))
+            # print('Iter %d/%d - Loss: %.3f ' % (
+            #     i + 1, training_iter, loss.item(),
+            # ))
             optimizer.step()
 
-        return x.item()
+        return x.clone().detach().numpy()
 
     def _upper_confidential_bound(self, a, x, n, model = None):
         """
@@ -405,7 +403,7 @@ class bayesian_optimization:
 
         return -1 * ts
 
-    def _expected_acquisition(self, a, x):
+    def _expected_acquisition(self, a, x, n=None):
 
         x = x.reshape(-1, self._dim)
 
@@ -514,11 +512,10 @@ class bayesian_optimization:
         # Calculate acquisition function
         if decision_type == 'distributed':
             if self._num_fantasies:
-                acq = - self._expected_acquisition(a, X)
+                acq = - self._expected_acquisition(a, X, n)
             else:
                 # Vanilla acquisition functions
                 acq = - self._acquisition_function(a, X, n)
-
 
             # Apply policy
             if self._policy == 'boltzmann':
@@ -528,12 +525,15 @@ class bayesian_optimization:
                 # Greedy Policy
                 x = X[np.argmax(acq), :]
 
-        else:
-            x = self._acquisition_function(X, n)
+            if self._record_step:
+                self._acquisition_evaluations[a].append(-1 * acq[0:self._grid.shape[0]])
+                acq = acq[self._grid.shape[0]:]
 
-        if self._record_step:
-            self._acquisition_evaluations[a].append(-1*acq[0:self._grid.shape[0]])
-            acq = acq[self._grid.shape[0]:]
+        else:
+            x = self._acquisition_function(a, X, n)
+            if self._record_step:
+                for acq_evaluation in self._acquisition_evaluations:
+                    acq_evaluation.append(np.zeros_like(x))
 
         return x
 
@@ -586,7 +586,13 @@ class bayesian_optimization:
 
             if self.args.acquisition_function == 'es' and self.args.decision_type == 'parallel':
                 self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
-                self.model = ExactGPModel(torch.tensor(self.X), torch.tensor(self.Y), self.likelihood)
+                X = np.vstack([self.X[a] for a in range(self.n_workers)])
+                Y = np.vstack([self.Y[a] for a in range(self.n_workers)])
+                # Standardize
+                Y = self.scaler[0].fit_transform(np.array(Y).reshape(-1, 1)).squeeze()
+                # all_x = torch.reshape(torch.tensor(self.X), [-1, len(self.domain.shape)])
+                # all_y = torch.squeeze(torch.tensor(self.Y))
+                self.model = ExactGPModel(torch.tensor(X), torch.tensor(Y), self.likelihood)
                 self.model.train()
                 self.likelihood.train()
             else:
@@ -672,10 +678,10 @@ class bayesian_optimization:
                     # Standardize
                     Y = self.scaler[0].fit_transform(np.array(Y).reshape(-1, 1))
                     # Fit surrogate
-                    self.model.fit(X, Y)
+                    self.model.fit(X, Y, self.likelihood)
 
                     # Find next query
-                    x = self._find_next_query(n, self.n_workers, random_search, decision_type='parallel')
+                    x = self._find_next_query(n, 0, random_search, decision_type='parallel')
                     self._next_query = x
 
 
@@ -691,11 +697,11 @@ class bayesian_optimization:
                 if self._record_step:
                     self._plot_iteration(n, plot)
 
-        self.pre_arg_max = []
-        self.pre_max = []
-        for a in range(self.n_workers):
-            self.pre_arg_max.append(np.array(self.model[a].y_train_).argmax())
-            self.pre_max.append(self.model[a].X_train_[np.array(self.model[a].y_train_).argmax()])
+        # self.pre_arg_max = []
+        # self.pre_max = []
+        # for a in range(self.n_workers):
+        #     self.pre_arg_max.append(np.array(self.model[a].y_train_).argmax())
+        #     self.pre_max.append(self.model[a].X_train_[np.array(self.model[a].y_train_).argmax()]) todo: used for what?
 
         # Compute and plot regret
         iter, r_mean, r_conf95 = self._mean_regret()
@@ -722,15 +728,19 @@ class bayesian_optimization:
         """
         mu = []
         std = []
-        for a in range(self.n_workers):
-            mu_a, std_a = self.model[a].predict(self._grid, return_std=True)
-            mu.append(mu_a)
-            std.append(std_a)
-            acq = [-1 * self._acquisition_evaluations[a][iter//plot_iter] for a in range(self.n_workers)]
+        if self.args.decision_type == 'distributed':
+            for a in range(self.n_workers):
+                mu_a, std_a = self.model[a].predict(self._grid, return_std=True)
+                mu.append(mu_a)
+                std.append(std_a)
+                acq = [-1 * self._acquisition_evaluations[a][iter//plot_iter] for a in range(self.n_workers)]
 
-        for a in range(self.n_workers):
-            mu[a] = self.scaler[a].inverse_transform(mu[a].reshape(-1, 1))
-            std[a] = self.scaler[a].scale_ * std[a]
+            for a in range(self.n_workers):
+                mu[a] = self.scaler[a].inverse_transform(mu[a].reshape(-1, 1))
+                std[a] = self.scaler[a].scale_ * std[a]
+
+        else:
+            mu, std = self.model.predict(self._grid, return_std=True)
 
         if self._dim == 1:
             self._plot_1d(iter, mu, std, acq)
@@ -1010,16 +1020,19 @@ class ExactGPModel(gpytorch.models.ExactGP):
     #     self.model.train()
     #     self.likelihood.train()
 
-    def fit(self, X, Y):
+    def fit(self, X, Y, likelihood):
         if isinstance(X, np.ndarray):
             X = torch.tensor(X)
         if isinstance(Y, np.ndarray):
             Y = torch.tensor(Y)
         if len(X.shape) == 2:
-            X = X[np.newaxis, :, :]
+            X = X
         if len(Y.shape) == 2:
-            Y = torch.squeeze(Y)[np.newaxis, :]
-        self.set_train_data(X, Y)
+            Y = torch.reshape(Y, [-1, ])
+        try:
+            self.set_train_data(X, Y)
+        except:
+            self.__init__(X, Y, likelihood)
 
     def predict(self, X, return_std= False, return_cov = False):
         # self.model.eval()
@@ -1037,7 +1050,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
 
 
 
-class BayesianOptimizationTorch(bayesian_optimization):
+class BayesianOptimizationCentralized(bayesian_optimization):
     def __init__(self, objective, domain, arg_max = None, n_workers = 1,
                  network = None, kernel = kernels.RBF(), alpha=10**(-10),
                  acquisition_function = 'ei', policy = 'greedy', fantasies = 0,
@@ -1045,61 +1058,320 @@ class BayesianOptimizationTorch(bayesian_optimization):
                  pending_regularization = None, pending_regularization_strength = None,
                  grid_density = 100, x0=None, n_pre_samples=5, args=dict()):
 
-        super(BayesianOptimizationTorch, self).__init__(objective, domain=domain, arg_max=arg_max, n_workers=n_workers,
+        super(BayesianOptimizationCentralized, self).__init__(objective, domain=domain, arg_max=arg_max, n_workers=n_workers,
                  network=network, kernel=kernel, alpha=alpha,
                  acquisition_function=acquisition_function, policy = policy, fantasies = fantasies,
                  epsilon = epsilon, regularization = regularization, regularization_strength = regularization_strength,
                  pending_regularization = pending_regularization, pending_regularization_strength = pending_regularization_strength,
                  grid_density = grid_density, args=args)
-        likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        init_x = torch.zeros_like(self.domain)
-        init_y = self.objective(init_x).item()
-        self.model = [ExactGPModel(init_x, init_y, likelihood)]
+        assert self.args.decision_type == 'parallel' or self.n_workers == 1
+        self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
 
-    def _entropy_search_grad(self, x, n, model = None):
+    def _find_next_query(self, n, a, random_search, decision_type='distributed'):
         """
-                Entropy search acquisition function.
-                Args:
-                    a: # agents
-                    x: array-like, shape = [n_samples, n_hyperparams]
-                    n: agent nums
-                    model:
-                """
+        Proposes the next query.
+        Arguments:
+        ----------
+            n: integer
+                Iteration number.
+            agent: integer
+                Agent id to find next query for.
+            model: sklearn model
+                Surrogate model used for acqusition function
+            random_search: integer.
+                Number of random samples used to optimize the acquisition function. Default 1000
+        """
+        # Candidate set
+        x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], size=(random_search, self._dim))
 
-        x = x.reshape(-1, self._dim)
+        X = x[:]
+        if self._record_step:
+            X = np.append(self._grid, x).reshape(-1, self._dim)
 
-        if model is None:
-            model = self.model[0]
-
-        # if self.beta is None:
-        #     self.beta = 2.
-        self.beta = 3 - 0.019 * n
-        # print(self.beta)
+        # Calculate acquisition function
+        x = self._acquisition_function(a, X, n)
+        if self._record_step:
+            for acq_evaluation in self._acquisition_evaluations:
+                acq_evaluation.append(np.zeros_like(x))
 
 
+        return x
 
-        mu, sigma = model.predict(x, return_std=True)
-        mu = np.squeeze(mu)
-        ucb = mu + self.beta * sigma
-        amaxucb = x[np.argmax(ucb)][np.newaxis, :]
-        self.amaxucb = amaxucb
-        x = torch.tensor([amaxucb]*n, requires_grad=True).resize([-1, n])
-        optimizer = torch.optim.Adam(x, lr=0.1)
-        training_iter = 50
-        for i in range(training_iter):
-            optimizer.zero_grad()
-            joint_x = torch.vstack((x,torch.tensor(amaxucb).resize([-1 ,1])))
-            cov_x_xucb = model.predict(joint_x, return_cov=True)[1][:, :-1].reshape([-1,1])
-            cov_x_x = model.predict(x, return_cov=True)[1]
-            loss = -torch.matmul(torch.matmul(cov_x_xucb.T,cov_x_x), cov_x_xucb)
-            loss.backward()
-            print('Iter %d/%d - Loss: %.3f ' % (
-                i + 1, training_iter, loss.item(),
-                # model.covar_module.base_kernel.lengthscale.item(),
-                # model.likelihood.noise.item()
-            ))
-            optimizer.step()
+    def optimize(self, n_iters, n_runs = 1, x0=None, n_pre_samples=5, random_search=100, plot = False):
+        """
+        Arguments:
+        ----------
+            n_iters: integer.
+                Number of iterations to run the search algorithm.
+            x0: array-like, shape = [n_pre_samples, n_params].
+                Array of initial points to sample the loss function for. If None, randomly
+                samples from the loss function.
+            n_pre_samples: integer.
+                If x0 is None, samples `n_pre_samples` initial points.
+            random_search: integer.
+                Flag that indicates whether to perform random search or L-BFGS-B to optimize the acquisition function.
+            plot: bool or integer
+                If integer, plot iterations with every plot number iteration. If True, plot every interation.
+        """
 
-        return x.item()
+        self._simple_regret = np.zeros((n_runs, n_iters+1))
+        self._distance_traveled = np.zeros((n_runs, n_iters+1))
+
+        for run in tqdm(range(n_runs), position=0, leave = None, disable = not n_runs > 1):
+
+
+
+            # Reset model and data before each run
+            self._next_query = []
+            # self.bc_data = [[[] for j in range(self.n_workers)] for i in range(self.n_workers)]
+            self.X_train = []
+            self.Y_train =[]
+            self.X = []
+            self.Y = []
+
+
+            # Initial data
+            if x0 is None:
+                for params in np.random.uniform(self.domain[:, 0], self.domain[:, 1], (n_pre_samples, self.domain.shape[0])):
+                    self.X.append(params)
+                    self.Y.append(self.objective(params))
+            else:
+                # Change definition of x0 to be specfic for each agent
+                for params in x0:
+                    self.X.append(params)
+                    self.Y.append(self.objective(params))
+            self._initial_data_size = len(self.Y)
+
+            self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
+            # Standardize
+            Y = self.scaler[0].fit_transform(np.array(self.Y).reshape(-1, 1)).squeeze()
+            # all_x = torch.reshape(torch.tensor(self.X), [-1, len(self.domain.shape)])
+            # all_y = torch.squeeze(torch.tensor(self.Y))
+            self.model = ExactGPModel(torch.tensor(self.X), torch.tensor(Y), self.likelihood)
+            self.model.train()
+            self.likelihood.train()
+
+
+            for n in tqdm(range(n_iters+1), position = n_runs > 1, leave = None):
+
+                # record step indicator
+                self._record_step = False
+                if plot and n_runs == 1:
+                    if n == n_iters or not n % plot:
+                        self._record_step = True
+
+                # parallel/centralized decision
+                obs = [self.objective(q) for q in self._next_query]
+                self.X = self.X + [q for q in self._next_query]
+                self.Y = self.Y + obs
+                self.X_train = self.X_train + [q for q in self._next_query]
+                self.Y_train = self.Y_train + obs
+                # for a in range(self.n_workers):
+                #
+                #     # Updata data knowledge
+                if n == 0:
+                    self.X_train = self.X
+                    self.Y_train = self.Y
+                #     else:
+                #         self.X[a].append(self._next_query[a])
+                #         self.Y[a].append(self.objective(self._next_query[a]))
+                #         self.X_train[a].append(self._next_query[a])
+                #         self.Y_train[a].append(self.objective(self._next_query[a]))
+
+                X = np.array(self.X)
+                # Standardize
+                Y = self.scaler[0].fit_transform(np.array(self.Y).reshape(-1, 1)).squeeze()
+                # Fit surrogate
+                self.model.fit(X, Y, self.likelihood)
+                self.model.train()
+                self.likelihood.train()
+
+                # Find next query
+                self._next_query = self._find_next_query(n, 0, random_search, decision_type='parallel')
+
+
+                # Calculate regret
+                self._simple_regret[run,n] = self._regret(np.max(self.Y_train))
+                # Calculate distance traveled
+                if not n:
+                    self._distance_traveled[run,n] = 0
+                else:
+                    XinAgent = np.array(self.X[self._initial_data_size - 3:]).reshape([-1, self.n_workers, len(self.domain.shape)])
+                    XinAgent = np.swapaxes(XinAgent, 0, 1)
+                    self._distance_traveled[run,n] =  self._distance_traveled[run,n-1] + sum([np.linalg.norm(XinAgent[a][-2] - XinAgent[a][-1]) for a in range(self.n_workers)])
+
+                # Plot optimization step
+                if self._record_step:
+                    self._plot_iteration(n, plot)
+
+        # self.pre_arg_max = []
+        # self.pre_max = []
+        # for a in range(self.n_workers):
+        #     self.pre_arg_max.append(np.array(self.model[a].y_train_).argmax())
+        #     self.pre_max.append(self.model[a].X_train_[np.array(self.model[a].y_train_).argmax()]) todo: used for what?
+
+        # Compute and plot regret
+        iter, r_mean, r_conf95 = self._mean_regret()
+        self._plot_regret(iter, r_mean, r_conf95)
+
+        iter, d_mean, d_conf95 = self._mean_distance_traveled()
+
+        # Save data
+        self._save_data(data = [iter, r_mean, r_conf95, d_mean, d_conf95], name = 'data')
+
+        # Generate gif
+        if plot and n_runs == 1:
+            self._generate_gif(n_iters, plot)
+
+
+    def _plot_iteration(self, iter, plot_iter):
+        """
+        Plots the surrogate and acquisition function.
+        """
+        mu, std = self.model.predict(self._grid, return_std=True)
+
+
+        if self._dim == 1:
+            pass
+        elif self._dim == 2:
+            self._plot_2d(iter, mu.detach().numpy())
+        else:
+            print("Can't plot for higher dimensional problems.")
+
+    def _plot_2d(self, iter, mu, acq=None):
+
+        cmap = cm.get_cmap('jet')
+        rgba = [cmap(i) for i in np.linspace(0,1,self.n_workers)]
+        if self.n_workers == 1:
+            rgba = ['k']
+
+        class ScalarFormatterForceFormat(ticker.ScalarFormatter):
+            def _set_format(self):
+                self.format = "%1.2f"
+        fmt = ScalarFormatterForceFormat()
+        fmt.set_powerlimits((0,0))
+        fmt.useMathText = True
+
+        x = np.array(self.X)
+        y = np.array(self.Y)
+        # _next_query = np.array(self._next_query).reshape([3, -1])
+
+        first_param_grid = np.linspace(self.domain[0,0], self.domain[0,1], self._grid_density)
+        second_param_grid = np.linspace(self.domain[1,0], self.domain[1,1], self._grid_density)
+        X, Y = np.meshgrid(first_param_grid, second_param_grid, indexing='ij')
+
+        for a in range(1):
+
+            fig, ax = plt.subplots(1, 3, figsize=(10,4), sharey=True) # , sharex=True
+            (ax1, ax2, ax3) = ax
+            plt.setp(ax.flat, aspect=1.0, adjustable='box')
+
+            N = 100
+            # Objective plot
+            Y_obj = [self.objective(i) for i in self._grid]
+            clev1 = np.linspace(min(Y_obj), max(Y_obj),N)
+            cp1 = ax1.contourf(X, Y, np.array(Y_obj).reshape(X.shape), clev1,  cmap = cm.coolwarm)
+            for c in cp1.collections:
+                c.set_edgecolor("face")
+            cbar1 = plt.colorbar(cp1, ax=ax1, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
+            cbar1.ax.tick_params(labelsize=10)
+            cbar1.ax.locator_params(nbins=5)
+            ax1.autoscale(False)
+            ax1.scatter(x[:, 0], x[:, 1], zorder=1, color = rgba[a], s = 10)
+            ax1.axvline(self._next_query[a][0], color='k', linewidth=1)
+            ax1.axhline(self._next_query[a][1], color='k', linewidth=1)
+            ax1.set_ylabel("y", fontsize = 10, rotation=0)
+            leg1 = ax1.legend(['Objective'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            ax1.add_artist(leg1)
+            ax1.set_xlim([first_param_grid[0], first_param_grid[-1]])
+            ax1.set_ylim([second_param_grid[0], second_param_grid[-1]])
+            ax1.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
+            ax1.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
+            plt.setp(ax1.get_yticklabels()[0], visible=False)
+            ax1.tick_params(axis='both', which='both', labelsize=10)
+            ax1.scatter(self.arg_max[:,0], self.arg_max[:,1], marker='x', c='gold', s=30)
+
+            if self.n_workers > 1:
+                ax1.legend(["Iteration %d" % (iter), "Agent %d" % (a)], fontsize = 10, loc='upper left', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            else:
+                ax1.legend(["Iteration %d" % (iter)], fontsize = 10, loc='upper left', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+
+            # Surrogate plot
+            d = 0
+            if mu.reshape(X.shape).max() - mu.reshape(X.shape).min() == 0:
+                d = mu.reshape(X.shape).max()*0.1
+            clev2 = np.linspace(mu.reshape(X.shape).min() - d, mu.reshape(X.shape).max() + d,N)
+            cp2 = ax2.contourf(X, Y, mu.reshape(X.shape), clev2,  cmap = cm.coolwarm)
+            for c in cp2.collections:
+                c.set_edgecolor("face")
+            cbar2 = plt.colorbar(cp2, ax=ax2, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
+            cbar2.ax.tick_params(labelsize=10)
+            cbar2.ax.locator_params(nbins=5)
+            ax2.autoscale(False)
+            ax2.scatter(x[:, 0], x[:, 1], zorder=1, color = rgba[a], s = 10)
+            if self._acquisition_function in ['es', 'ucb']:
+                ax2.scatter(self.amaxucb[0, 0], self.amaxucb[0, 1], marker='o', c='red', s=30)
+            ax2.axvline(self._next_query[a][0], color='k', linewidth=1)
+            ax2.axhline(self._next_query[a][1], color='k', linewidth=1)
+            ax2.set_ylabel("y", fontsize = 10, rotation=0)
+            ax2.legend(['Surrogate'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            ax2.set_xlim([first_param_grid[0], first_param_grid[-1]])
+            ax2.set_ylim([second_param_grid[0], second_param_grid[-1]])
+            ax2.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
+            ax2.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
+            # plt.setp(ax2.get_yticklabels()[0], visible=False)
+            # plt.setp(ax2.get_yticklabels()[-1], visible=False)
+            ax2.tick_params(axis='both', which='both', labelsize=10)
+
+            # # Broadcasted data
+            # for transmitter in range(self.n_workers):
+            #     x_bc = []
+            #     for (xbc,ybc) in self._prev_bc_data[transmitter][a]:
+            #         x_bc = np.append(x_bc,xbc).reshape(-1, self._dim)
+            #     x_bc = np.array(x_bc)
+            #     if x_bc.shape[0]>0:
+            #         ax1.scatter(x_bc[:, 0], x_bc[:, 1], zorder=1, color = rgba[transmitter], s = 10)
+            #         ax2.scatter(x_bc[:, 0], x_bc[:, 1], zorder=1, color = rgba[transmitter], s = 10)
+
+            # # Acquisition function contour plot
+            # d = 0
+            # if acq[a].reshape(X.shape).max() - acq[a].reshape(X.shape).min() == 0.0:
+            #     d = acq[a].reshape(X.shape).max()*0.1
+            #     d = 10**(-100)
+            # clev3 = np.linspace(acq[a].reshape(X.shape).min() - d, acq[a].reshape(X.shape).max() + d,N)
+            # cp3 = ax3.contourf(X, Y, acq[a].reshape(X.shape), clev3, cmap = cm.coolwarm)
+            # cbar3 = plt.colorbar(cp3, ax=ax3, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
+            # for c in cp3.collections:
+            #     c.set_edgecolor("face")
+            # cbar3.ax.locator_params(nbins=5)
+            # cbar3.ax.tick_params(labelsize=10)
+            # ax3.autoscale(False)
+            # ax3.axvline(self._next_query[a][0], color='k', linewidth=1)
+            # ax3.axhline(self._next_query[a][1], color='k', linewidth=1)
+            # ax3.set_xlabel("x", fontsize = 10)
+            # ax3.set_ylabel("y", fontsize = 10, rotation=0)
+            # ax3.legend(['Acquisition'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            # ax3.set_xlim([first_param_grid[0], first_param_grid[-1]])
+            # ax3.set_ylim([second_param_grid[0], second_param_grid[-1]])
+            # ax3.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
+            # ax3.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
+            # # plt.setp(ax3.get_yticklabels()[-1], visible=False)
+            # ax3.tick_params(axis='both', which='both', labelsize=10)
+
+            ax1.tick_params(axis='both', which='major', labelsize=10)
+            ax1.tick_params(axis='both', which='minor', labelsize=10)
+            ax2.tick_params(axis='both', which='major', labelsize=10)
+            ax2.tick_params(axis='both', which='minor', labelsize=10)
+            # ax3.tick_params(axis='both', which='major', labelsize=10)
+            # ax3.tick_params(axis='both', which='minor', labelsize=10)
+            ax1.yaxis.offsetText.set_fontsize(10)
+            ax2.yaxis.offsetText.set_fontsize(10)
+            # ax3.yaxis.offsetText.set_fontsize(10)
+
+            fig.subplots_adjust(wspace=0, hspace=0)
+            plt.savefig(self._PDF_DIR_ + '/bo_iteration_%d_agent_%d.pdf' % (iter, a), bbox_inches='tight')
+            plt.savefig(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d.png' % (iter, a), bbox_inches='tight')
+
+
 
 
