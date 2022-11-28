@@ -20,6 +20,8 @@ from matplotlib.patches import Patch
 from sklearn.utils import check_random_state
 from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import kernels, GaussianProcessRegressor
+import torch
+import gpytorch
 
 warnings.filterwarnings("ignore")
 
@@ -932,3 +934,87 @@ class bayesian_optimization:
                             plots.append(imageio.imread(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d.png' % (i, a)))
                         except: pass
                 imageio.mimsave(self._GIF_DIR_ + '/bo_agent_%d.gif' % (a), plots, duration=1.0)
+
+class ExactGPModel(object):
+
+    def __init__(self, X, Y, likelihood):
+        self.model = gpytorch.models.ExactGP(X, Y, likelihood)
+    def fit(self, X, Y):
+        self.model.set_train_data(X, Y)
+
+    def predict(self, X, return_std= False, return_cov = False):
+        f_pred = self.model(X)
+        if return_std:
+            return f_pred.mean, f_pred.variance
+        elif return_cov:
+            return f_pred.mean, f_pred.covariance_matrix
+        else:
+            return f_pred.mean
+
+
+class BayesianOptimizationTorch(bayesian_optimization):
+    def __init__(self, objective, domain, arg_max = None, n_workers = 1,
+                 network = None, kernel = kernels.RBF(), alpha=10**(-10),
+                 acquisition_function = 'ei', policy = 'greedy', fantasies = 0,
+                 epsilon = 0.01, regularization = None, regularization_strength = None,
+                 pending_regularization = None, pending_regularization_strength = None,
+                 grid_density = 100, x0=None, n_pre_samples=5, args=dict()):
+
+        super(BayesianOptimizationTorch, self).__init__(objective, domain=domain, arg_max=arg_max, n_workers=n_workers,
+                 network=network, kernel=kernel, alpha=alpha,
+                 acquisition_function=acquisition_function, policy = policy, fantasies = fantasies,
+                 epsilon = epsilon, regularization = regularization, regularization_strength = regularization_strength,
+                 pending_regularization = pending_regularization, pending_regularization_strength = pending_regularization_strength,
+                 grid_density = grid_density, args=args)
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        init_x = torch.zeros_like(self.domain)
+        init_y = self.objective(init_x).item()
+        self.model = [ExactGPModel(init_x, init_y, likelihood)]
+
+    def _entropy_search_grad(self, x, n, model = None):
+        """
+                Entropy search acquisition function.
+                Args:
+                    a: # agents
+                    x: array-like, shape = [n_samples, n_hyperparams]
+                    n: agent nums
+                    model:
+                """
+
+        x = x.reshape(-1, self._dim)
+
+        if model is None:
+            model = self.model[0]
+
+        # if self.beta is None:
+        #     self.beta = 2.
+        self.beta = 3 - 0.019 * n
+        # print(self.beta)
+
+
+
+        mu, sigma = model.predict(x, return_std=True)
+        mu = np.squeeze(mu)
+        ucb = mu + self.beta * sigma
+        amaxucb = x[np.argmax(ucb)][np.newaxis, :]
+        self.amaxucb = amaxucb
+        x = torch.tensor([amaxucb]*n, requires_grad=True).resize([-1, n])
+        optimizer = torch.optim.Adam(x, lr=0.1)
+        training_iter = 50
+        for i in range(training_iter):
+            optimizer.zero_grad()
+            joint_x = torch.vstack((x,torch.tensor(amaxucb).resize([-1 ,1])))
+            cov_x_xucb = model.predict(joint_x, return_cov=True)[1][:, :-1].reshape([-1,1])
+            cov_x_x = model.predict(x, return_cov=True)[1]
+            loss = -torch.matmul(torch.matmul(cov_x_xucb.T,cov_x_x), cov_x_xucb)
+            loss.backward()
+            print('Iter %d/%d - Loss: %.3f ' % (
+                i + 1, training_iter, loss.item(),
+                # model.covar_module.base_kernel.lengthscale.item(),
+                # model.likelihood.noise.item()
+            ))
+            optimizer.step()
+
+        return x.item()
+
+
