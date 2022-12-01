@@ -2,77 +2,36 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 import os
+from os.path import dirname,join
 import csv
 import __main__
 import json
 
-
-
-
-# bird
-# result_dirs = ['result/bird/2022-11-15_122602SA-EI',
-#                'result/bird/2022-11-15_122753SA-UCB',
-#                'result/bird/2022-11-15_122947SA-ES',
-#                'result/bird/2022-11-15_123336SA-EI',
-#                # 'temp/bird/2022-09-05_235606safeopt',
-#                # 'temp/bird/2022-09-19_235729SA-DR',
-#                # 'temp/bird/2022-09-20_000555SA-MCA',
-#                # 'temp/bird/2022-09-20_004634SA-safeopt'
-#                 ]
-# ackley
-# result_dirs = ['result/ackley/2022-11-15_121541SA-UCB',
-#                'result/ackley/2022-11-15_121740SA-ES',
-#                'result/ackley/2022-11-15_122042SA-EI',
-#                # 'temp/ackley/2022-09-06_104312SA',
-#                # 'temp/ackley/2022-09-06_105843safeopt',
-#                # 'temp/ackley/2022-09-20_004736SA-MCA',
-#                # 'temp/ackley/2022-09-20_010803SA-DR',
-#                # 'temp/ackley/2022-09-20_004634SA-safeopt',
-#                ]
-
-# rosenbrock
-result_dirs = ['result/rosenbrock/2022-11-15_131336SA-EI',
-               'result/rosenbrock/2022-11-15_131508SA-ES',
-               'result/rosenbrock/2022-11-15_132309SA-UCB',
-               # 'temp/rosenbrock/2022-09-10_230138SA-CWEI',
-               # 'temp/rosenbrock/2022-09-06_103427safeopt',
-               # 'temp/rosenbrock/2022-09-19_195718SA-MCA',
-               # 'temp/rosenbrock/2022-09-19_201558SA-DR',
-               # 'temp/rosenbrock/2022-09-19_234954SA-safeopt',
-               # 'temp/rosenbrock/2022-09-12_122105EI',
-               ]
-
-
+result_to_dump = 'bird'
 # legends = ['distributed', 'regularized', 'expected', 'single_agent']
 
 def _plot_regret(result_dir, x_axis = 'iter', log=False):
     root_dir = os.path.dirname(os.path.dirname(os.path.dirname( __main__.__file__ )))
-    file_dir = os.path.join(root_dir, result_dir)
+    file_dir = join(join(join(root_dir, 'result'), result_to_dump), result_dir)
     file = os.path.join(file_dir,'data/data.csv')
     param = json.loads(open(os.path.join(file_dir,'data/config.json')).read())
     # identify legend
-    if param['acquisition_function'] == 'ucb':
-        auto_legend = 'UCB'
-    elif param['acquisition_function'] == 'es':
-        auto_legend = 'ES'
-    elif param['acquisition_function'] == 'ts':
-        auto_legend = 'ES'
-    # elif param['fantasies']:
-    #     auto_legend = 'MCA'
-    # elif param['regularization'] is not None:
-    #     auto_legend = 'DR'
-    # elif param['acquisition_function'] == 'safeopt':
-    #     auto_legend = 'StageOpt'
-    else:
-        # if param['unconstrained']:
-        #     auto_legend = 'EI'
-        # else:
-        auto_legend = 'EI'
+    alg_name = param['acquisition_function'].upper()
+    if param['fantasies']:
+        alg_name = alg_name + '-MC'
+    if param['regularization'] is not None:
+        alg_name = alg_name + '-DR'
+    if param['pending_regularization'] is not None:
+        alg_name = alg_name + '-PR'
+    if param['policy'] != 'greedy':
+        alg_name = alg_name + '-SP'
 
-    # if param['n_workers'] > 1:
-    #     auto_legend = 'MA-' + auto_legend
-    # else:
-    #     auto_legend = 'SA-' + auto_legend
+    if param['n_workers'] > 1:
+        alg_name = 'MA-' + alg_name
+    else:
+        alg_name = 'SA-' + alg_name
+
+    auto_legend = alg_name
 
     # file = result_dir + '/data/data.csv'
     with open(file, 'r') as csvfile:
@@ -130,9 +89,15 @@ for x_axis in ['iter', 'interactions', 'dist']:
     use_log_scale = False
     legends = []
     real_legends = []
-    for result_dir in result_dirs:
+    results_dir = join(join(dirname(dirname(dirname(__file__))), 'result'), result_to_dump)
+    dirs = [dir for dir in os.listdir(results_dir) if os.path.isdir(os.path.join(results_dir,dir))]
+    i = 2
+    for result_dir in dirs:
         log, auto_legend, x_axis = _plot_regret(result_dir, x_axis=x_axis)
         use_log_scale = use_log_scale or log
+        if auto_legend in legends:
+            auto_legend = auto_legend + str(i)
+            i += 1
         legends += [auto_legend, '']
         real_legends.append((auto_legend))
 
@@ -153,7 +118,7 @@ for x_axis in ['iter', 'interactions', 'dist']:
     plt.gca().xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
     plt.tight_layout()
     root_dir = os.path.dirname(os.path.dirname(os.path.dirname( __main__.__file__ )))
-    objective = result_dirs[0].split('/')[1]
+    objective = result_to_dump
     if use_log_scale:
         plt.savefig(root_dir + '/result/'+ objective +'/regret_log_' + x_axis + '.pdf', bbox_inches='tight')
         plt.savefig(root_dir + '/result/'+ objective +'/regret_log_' + x_axis + '.png', bbox_inches='tight')

@@ -50,11 +50,9 @@ class bayesian_optimization:
             self._acquisition_function = self._expected_improvement
         elif acquisition_function == 'ts':
             self._acquisition_function = self._thompson_sampling
-        elif acquisition_function == 'es' and args.decision_type == 'distributed':
-            self._acquisition_function = self._entropy_search_single
         elif acquisition_function == 'es':
-            self._acquisition_function = self._entropy_search_grad
-        elif acquisition_function == 'ucb':
+            self._acquisition_function = self._entropy_search_single
+        elif acquisition_function == 'ucb' or acquisition_function == 'bucb' or acquisition_function == 'ucbpe':
             self._acquisition_function = self._upper_confidential_bound
         else:
             print('Supported acquisition functions: ei, ts, es, ucb')
@@ -115,24 +113,21 @@ class bayesian_optimization:
         self._DT_ = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
         self._ROOT_DIR_ = os.path.dirname(os.path.dirname(__main__.__file__))
 
-        if acquisition_function == 'es':
-            alg_name = 'ES'
+        alg_name = acquisition_function.upper()
 
-        elif acquisition_function == 'ucb':
-            alg_name = 'UCB'
-
-        elif args.fantasies:
-            alg_name = 'MCA'
-        elif args.regularization is not None:
-            if args.pending_regularization is not None:
-                alg_name = 'DR_tau'
-            else:
-                alg_name = 'DR'
-        else:
-            if args.unconstrained:
-                alg_name = 'EI'
-            else:
-                alg_name = 'CWEI'
+        if args.fantasies:
+            alg_name = alg_name + '-MC'
+        if args.regularization is not None:
+            alg_name = alg_name + '-DR'
+        if args.pending_regularization is not None:
+            alg_name = alg_name + '-PR'
+        if args.policy != 'greedy':
+            alg_name = alg_name + '-SP'
+        # else:
+        #     if args.unconstrained:
+        #         alg_name = 'EI'
+        #     else:
+        #         alg_name = 'CWEI'
 
         if args.n_workers > 1:
             alg_name = 'MA-' + alg_name
@@ -911,7 +906,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
         super(ExactGPModel, self).__init__(X, Y, likelihood)
         # self.model = gpytorch.models.ExactGP(X, Y, self.likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel())
 
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -931,10 +926,10 @@ class ExactGPModel(gpytorch.models.ExactGP):
             X = X
         if len(Y.shape) == 2:
             Y = torch.reshape(Y, [-1, ])
-        try:
-            self.set_train_data(X, Y)
-        except:
-            self.__init__(X, Y, likelihood)
+        # try:
+        self.set_train_data(X, Y, strict=False)
+        # except:
+        #     self.__init__(X, Y, likelihood)
 
     def predict(self, X, return_std= False, return_cov = False):
         # self.model.eval()
@@ -968,6 +963,15 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                  grid_density = grid_density, args=args)
         assert self.args.decision_type == 'parallel' or self.n_workers == 1
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        self.acq_name = None
+        if acquisition_function == 'es':
+            self._acquisition_function = self._entropy_search_grad
+        elif acquisition_function == 'bucb' or acquisition_function == 'ucbpe':
+            self._acquisition_function = self._batch_upper_confidential_bound
+            self.acq_name = acquisition_function
+        else:
+            print('Supported acquisition functions: ei, ts, es, bucb, ucbpe')
+            return
 
     def _entropy_search_grad(self, a, x, n):
         """
@@ -980,31 +984,26 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 """
 
         x = x.reshape(-1, self._dim)
-
-        # if self.beta is None:
-        #     self.beta = 2.
         self.beta = 3 - 0.019 * n
-        # print(self.beta)
 
         self.model.eval()
         self.likelihood.eval()
 
         mu, sigma = self.model.predict(x, return_std=True)
-        # mu = np.squeeze(mu)
         ucb = mu + self.beta * sigma
         amaxucb = x[np.argmax(ucb.clone().detach().numpy())][np.newaxis, :]
         self.amaxucb = amaxucb
         x = np.vstack([amaxucb for _ in range(self.n_workers)])
 
         x = torch.tensor(x, requires_grad=True)
-        optimizer = torch.optim.Adam([x], lr=0.1)
+        optimizer = torch.optim.Adam([x], lr=0.01)
         training_iter = 50
         for i in range(training_iter):
             optimizer.zero_grad()
             joint_x = torch.vstack((x,torch.tensor(amaxucb)))
             cov_x_xucb = self.model.predict(joint_x, return_cov=True)[1][-1, :-1].reshape([-1,1])
             cov_x_x = self.model.predict(x, return_cov=True)[1]
-            loss = -torch.matmul(torch.matmul(cov_x_xucb.T,cov_x_x), cov_x_xucb)
+            loss = -torch.matmul(torch.matmul(cov_x_xucb.T, torch.linalg.inv(cov_x_x + 0.01 * torch.eye(len(cov_x_x)))), cov_x_xucb)
             loss.backward()
             # print('Iter %d/%d - Loss: %.3f ' % (
             #     i + 1, training_iter, loss.item(),
@@ -1012,6 +1011,50 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             optimizer.step()
 
         return x.clone().detach().numpy()
+
+
+    def _batch_upper_confidential_bound(self, a, x, n):
+        """
+        Entropy search acquisition function.
+        Args:
+            a: # agents
+            x: array-like, shape = [n_samples, n_hyperparams]
+            model:
+        """
+
+        x = x.reshape(-1, self._dim)
+        queries = []
+
+        model = self.model
+        likelihood = self.likelihood
+
+        # if self.beta is None:
+        #     self.beta = 2.
+        self.beta = 0.15 + 0.019 * n
+        model.eval()
+        likelihood.eval()
+        mu, sigma = model.predict(x, return_std=True)
+        fantasized_X = self.X.copy()
+        fantasized_Y = self.Y.copy()
+        ucb = mu + self.beta * sigma
+        amaxucb = x[np.argmax(ucb.clone().detach().numpy())]
+        fantasized_y = 0.  # fantasized y will not affect sigma
+        query = amaxucb
+        queries.append(query)
+        self.amaxucb = amaxucb[np.newaxis, :]
+
+        for i in range(self.n_workers - 1):
+            fantasized_X.append(query)
+            fantasized_Y.append(fantasized_y)
+            model.fit(np.array(fantasized_X), np.array(fantasized_Y), likelihood)
+            _, sigma = model.predict(x, return_std=True)
+            if self.acq_name == 'bucb':
+                ucb = mu + self.beta * sigma
+                query = x[np.argmax(ucb.clone().detach().numpy())]
+            elif self.acq_name == 'ucbpe':
+                query = x[np.argmax(sigma.clone().detach().numpy())]
+            queries.append(query)
+        return np.array(queries)
 
     def _find_next_query(self, n, a, random_search, decision_type='distributed'):
         """
@@ -1127,8 +1170,9 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 Y = self.scaler[0].fit_transform(np.array(self.Y).reshape(-1, 1)).squeeze()
                 # Fit surrogate
                 self.model.fit(X, Y, self.likelihood)
-                self.model.train()
-                self.likelihood.train()
+                if n % 40 == 0:
+                    self.model.train()
+                    self.likelihood.train()
 
                 # Find next query
                 self._next_query = self._find_next_query(n, 0, random_search, decision_type='parallel')
