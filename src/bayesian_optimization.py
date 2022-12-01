@@ -270,49 +270,7 @@ class bayesian_optimization:
         acq = 1 / (var_amaxucb_x + 1) * cov_amaxucb_x ** 2
         return -1 * acq
 
-    def _entropy_search_grad(self, a, x, n):
-        """
-                Entropy search acquisition function.
-                Args:
-                    a: # agents
-                    x: array-like, shape = [n_samples, n_hyperparams]
-                    n: agent nums
-                    model:
-                """
 
-        x = x.reshape(-1, self._dim)
-
-        # if self.beta is None:
-        #     self.beta = 2.
-        self.beta = 3 - 0.019 * n
-        # print(self.beta)
-
-        self.model.eval()
-        self.likelihood.eval()
-
-        mu, sigma = self.model.predict(x, return_std=True)
-        # mu = np.squeeze(mu)
-        ucb = mu + self.beta * sigma
-        amaxucb = x[np.argmax(ucb.clone().detach().numpy())][np.newaxis, :]
-        self.amaxucb = amaxucb
-        x = np.vstack([amaxucb for _ in range(self.n_workers)])
-
-        x = torch.tensor(x, requires_grad=True)
-        optimizer = torch.optim.Adam([x], lr=0.1)
-        training_iter = 50
-        for i in range(training_iter):
-            optimizer.zero_grad()
-            joint_x = torch.vstack((x,torch.tensor(amaxucb)))
-            cov_x_xucb = self.model.predict(joint_x, return_cov=True)[1][-1, :-1].reshape([-1,1])
-            cov_x_x = self.model.predict(x, return_cov=True)[1]
-            loss = -torch.matmul(torch.matmul(cov_x_xucb.T,cov_x_x), cov_x_xucb)
-            loss.backward()
-            # print('Iter %d/%d - Loss: %.3f ' % (
-            #     i + 1, training_iter, loss.item(),
-            # ))
-            optimizer.step()
-
-        return x.clone().detach().numpy()
 
     def _upper_confidential_bound(self, a, x, n, model = None):
         """
@@ -375,7 +333,7 @@ class bayesian_optimization:
 
         return -1 * expected_improvement
 
-    def _thompson_sampling(self, a, x, n, model = None, num_samples = 1):
+    def _thompson_sampling(self, a, x, n=None, model = None, num_samples = 1):
         """
         Thompson sampling acquisition function.
         Arguments:
@@ -415,7 +373,7 @@ class bayesian_optimization:
         x_p = np.array(x_p).reshape(-1, self._dim)
 
         if not x_p.shape[0]:
-            return self._acquisition_function(a, x)
+            return self._acquisition_function(a, x, n)
         else:
             # Sample fantasies
             rng = check_random_state(0)
@@ -488,7 +446,7 @@ class bayesian_optimization:
             idx = np.random.choice(range(x.shape[0]))
         return x[idx]
 
-    def _find_next_query(self, n, a, random_search, decision_type='distributed'):
+    def _find_next_query(self, n, a, random_search):
         """
         Proposes the next query.
         Arguments:
@@ -510,30 +468,23 @@ class bayesian_optimization:
             X = np.append(self._grid, x).reshape(-1, self._dim)
 
         # Calculate acquisition function
-        if decision_type == 'distributed':
-            if self._num_fantasies:
-                acq = - self._expected_acquisition(a, X, n)
-            else:
-                # Vanilla acquisition functions
-                acq = - self._acquisition_function(a, X, n)
-
-            # Apply policy
-            if self._policy == 'boltzmann':
-                # Boltzmann Policy
-                x = self._blotzmann(n, x, acq)
-            else:
-                # Greedy Policy
-                x = X[np.argmax(acq), :]
-
-            if self._record_step:
-                self._acquisition_evaluations[a].append(-1 * acq[0:self._grid.shape[0]])
-                acq = acq[self._grid.shape[0]:]
-
+        if self._num_fantasies:
+            acq = - self._expected_acquisition(a, X, n)
         else:
-            x = self._acquisition_function(a, X, n)
-            if self._record_step:
-                for acq_evaluation in self._acquisition_evaluations:
-                    acq_evaluation.append(np.zeros_like(x))
+            # Vanilla acquisition functions
+            acq = - self._acquisition_function(a, X, n)
+
+        if self._record_step:
+            self._acquisition_evaluations[a].append(-1*acq[0:self._grid.shape[0]])
+            acq = acq[self._grid.shape[0]:]
+
+        # Apply policy
+        if self._policy == 'boltzmann':
+            # Boltzmann Policy
+            x = self._blotzmann(n, x, acq)
+        else:
+            #Greedy Policy
+            x = x[np.argmax(acq), :]
 
         return x
 
@@ -568,7 +519,10 @@ class bayesian_optimization:
             self.Y_train =[[] for i in range(self.n_workers)]
             self.X = [[] for i in range(self.n_workers)]
             self.Y = [[] for i in range(self.n_workers)]
-
+            self.model = [GaussianProcessRegressor(  kernel=self.kernel,
+                                                        alpha=self.alpha,
+                                                        n_restarts_optimizer=10)
+                                                        for i in range(self.n_workers) ]
 
             # Initial data
             if x0 is None:
@@ -584,23 +538,6 @@ class bayesian_optimization:
                         self.Y[a].append(self.objective(params))
             self._initial_data_size = len(self.Y[0])
 
-            if self.args.acquisition_function == 'es' and self.args.decision_type == 'parallel':
-                self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
-                X = np.vstack([self.X[a] for a in range(self.n_workers)])
-                Y = np.vstack([self.Y[a] for a in range(self.n_workers)])
-                # Standardize
-                Y = self.scaler[0].fit_transform(np.array(Y).reshape(-1, 1)).squeeze()
-                # all_x = torch.reshape(torch.tensor(self.X), [-1, len(self.domain.shape)])
-                # all_y = torch.squeeze(torch.tensor(self.Y))
-                self.model = ExactGPModel(torch.tensor(X), torch.tensor(Y), self.likelihood)
-                self.model.train()
-                self.likelihood.train()
-            else:
-                self.model = [GaussianProcessRegressor(  kernel=self.kernel,
-                                                            alpha=self.alpha,
-                                                            n_restarts_optimizer=10)
-                                                            for i in range(self.n_workers) ]
-
 
             for n in tqdm(range(n_iters+1), position = n_runs > 1, leave = None):
 
@@ -614,76 +551,44 @@ class bayesian_optimization:
 
                 self._prev_bc_data = copy.deepcopy(self.bc_data)
 
+                for a in range(self.n_workers):
 
-                if self.args.decision_type == 'distributed':
-                    for a in range(self.n_workers):
+                    # Updata data knowledge
+                    if n == 0:
+                        X = self.X[a]
+                        Y = self.Y[a]
+                        self.X_train[a] = self.X[a][:]
+                        self.Y_train[a] = self.Y[a][:]
+                    else:
+                        self.X[a].append(self._next_query[a])
+                        self.Y[a].append(self.objective(self._next_query[a]))
+                        self.X_train[a].append(self._next_query[a])
+                        self.Y_train[a].append(self.objective(self._next_query[a]))
 
-                        # Updata data knowledge
-                        if n == 0:
-                            X = self.X[a]
-                            Y = self.Y[a]
-                            self.X_train[a] = self.X[a][:]
-                            self.Y_train[a] = self.Y[a][:]
-                        else:
-                            self.X[a].append(self._next_query[a])
-                            self.Y[a].append(self.objective(self._next_query[a]))
-                            self.X_train[a].append(self._next_query[a])
-                            self.Y_train[a].append(self.objective(self._next_query[a]))
+                        X = self.X[a]
+                        Y = self.Y[a]
+                        for transmitter in range(self.n_workers):
+                            for (x,y) in self._prev_bc_data[transmitter][a]:
+                                X = np.append(X,x).reshape(-1, self._dim)
+                                Y = np.append(Y,y).reshape(-1, 1)
+                                self.X_train[a].append(x)
+                                self.Y_train[a].append(y)
 
-                            X = self.X[a]
-                            Y = self.Y[a]
-                            for transmitter in range(self.n_workers):
-                                for (x,y) in self._prev_bc_data[transmitter][a]:
-                                    X = np.append(X,x).reshape(-1, self._dim)
-                                    Y = np.append(Y,y).reshape(-1, 1)
-                                    self.X_train[a].append(x)
-                                    self.Y_train[a].append(y)
-
-                        # Standardize
-                        Y = self.scaler[a].fit_transform(np.array(Y).reshape(-1, 1))
-                        # Fit surrogate
-                        self.model.fit(X, Y)
-                        self.model.train()
-                        self.likelihood.train()
-
-                        # Find next query
-                        x = self._find_next_query(n, a, random_search)
-                        self._next_query[a] = x
-
-                        # # In case of a "duplicate", randomly sample next query point.
-                        # if np.any(np.abs(x - self.model[a].X_train_) <= 10**(-7)):
-                        #     x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
-
-                        # Broadcast data to neighbours
-                        self._broadcast(a,x,self.objective(x))
-
-                else:
-                    # parallel/centralized decision
-                    for a in range(self.n_workers):
-
-                        # Updata data knowledge
-                        if n == 0:
-                            X = self.X[a]
-                            Y = self.Y[a]
-                            self.X_train[a] = self.X[a][:]
-                            self.Y_train[a] = self.Y[a][:]
-                        else:
-                            self.X[a].append(self._next_query[a])
-                            self.Y[a].append(self.objective(self._next_query[a]))
-                            self.X_train[a].append(self._next_query[a])
-                            self.Y_train[a].append(self.objective(self._next_query[a]))
-
-                    X = np.vstack([self.X[a] for a in range(self.n_workers)])
-                    Y = np.vstack([self.Y[a] for a in range(self.n_workers)])
                     # Standardize
-                    Y = self.scaler[0].fit_transform(np.array(Y).reshape(-1, 1))
+                    Y = self.scaler[a].fit_transform(np.array(Y).reshape(-1, 1))
                     # Fit surrogate
-                    self.model.fit(X, Y, self.likelihood)
+                    self.model[a].fit(X, Y)
 
                     # Find next query
-                    x = self._find_next_query(n, 0, random_search, decision_type='parallel')
-                    self._next_query = x
+                    x = self._find_next_query(n, a, random_search)
+                    self._next_query[a] = x
 
+                    # In case of a "duplicate", randomly sample next query point.
+                    if np.any(np.abs(x - self.model[a].X_train_) <= 10**(-7)):
+                        x = np.random.uniform(self.domain[:, 0], self.domain[:, 1], self.domain.shape[0])
+
+                    # Broadcast data to neighbours
+                    self._broadcast(a,x,self.objective(x))
 
                 # Calculate regret
                 self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.Y_train for y_max in y_a]))
@@ -697,11 +602,11 @@ class bayesian_optimization:
                 if self._record_step:
                     self._plot_iteration(n, plot)
 
-        # self.pre_arg_max = []
-        # self.pre_max = []
-        # for a in range(self.n_workers):
-        #     self.pre_arg_max.append(np.array(self.model[a].y_train_).argmax())
-        #     self.pre_max.append(self.model[a].X_train_[np.array(self.model[a].y_train_).argmax()]) todo: used for what?
+        self.pre_arg_max = []
+        self.pre_max = []
+        for a in range(self.n_workers):
+            self.pre_arg_max.append(np.array(self.model[a].y_train_).argmax())
+            self.pre_max.append(self.model[a].X_train_[np.array(self.model[a].y_train_).argmax()])
 
         # Compute and plot regret
         iter, r_mean, r_conf95 = self._mean_regret()
@@ -728,19 +633,15 @@ class bayesian_optimization:
         """
         mu = []
         std = []
-        if self.args.decision_type == 'distributed':
-            for a in range(self.n_workers):
-                mu_a, std_a = self.model[a].predict(self._grid, return_std=True)
-                mu.append(mu_a)
-                std.append(std_a)
-                acq = [-1 * self._acquisition_evaluations[a][iter//plot_iter] for a in range(self.n_workers)]
+        for a in range(self.n_workers):
+            mu_a, std_a = self.model[a].predict(self._grid, return_std=True)
+            mu.append(mu_a)
+            std.append(std_a)
+            acq = [-1 * self._acquisition_evaluations[a][iter//plot_iter] for a in range(self.n_workers)]
 
-            for a in range(self.n_workers):
-                mu[a] = self.scaler[a].inverse_transform(mu[a].reshape(-1, 1))
-                std[a] = self.scaler[a].scale_ * std[a]
-
-        else:
-            mu, std = self.model.predict(self._grid, return_std=True)
+        for a in range(self.n_workers):
+            mu[a] = self.scaler[a].inverse_transform(mu[a])
+            std[a] = self.scaler[a].scale_ * std[a]
 
         if self._dim == 1:
             self._plot_1d(iter, mu, std, acq)
@@ -1067,6 +968,50 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         assert self.args.decision_type == 'parallel' or self.n_workers == 1
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
 
+    def _entropy_search_grad(self, a, x, n):
+        """
+                Entropy search acquisition function.
+                Args:
+                    a: # agents
+                    x: array-like, shape = [n_samples, n_hyperparams]
+                    n: agent nums
+                    model:
+                """
+
+        x = x.reshape(-1, self._dim)
+
+        # if self.beta is None:
+        #     self.beta = 2.
+        self.beta = 3 - 0.019 * n
+        # print(self.beta)
+
+        self.model.eval()
+        self.likelihood.eval()
+
+        mu, sigma = self.model.predict(x, return_std=True)
+        # mu = np.squeeze(mu)
+        ucb = mu + self.beta * sigma
+        amaxucb = x[np.argmax(ucb.clone().detach().numpy())][np.newaxis, :]
+        self.amaxucb = amaxucb
+        x = np.vstack([amaxucb for _ in range(self.n_workers)])
+
+        x = torch.tensor(x, requires_grad=True)
+        optimizer = torch.optim.Adam([x], lr=0.1)
+        training_iter = 50
+        for i in range(training_iter):
+            optimizer.zero_grad()
+            joint_x = torch.vstack((x,torch.tensor(amaxucb)))
+            cov_x_xucb = self.model.predict(joint_x, return_cov=True)[1][-1, :-1].reshape([-1,1])
+            cov_x_x = self.model.predict(x, return_cov=True)[1]
+            loss = -torch.matmul(torch.matmul(cov_x_xucb.T,cov_x_x), cov_x_xucb)
+            loss.backward()
+            # print('Iter %d/%d - Loss: %.3f ' % (
+            #     i + 1, training_iter, loss.item(),
+            # ))
+            optimizer.step()
+
+        return x.clone().detach().numpy()
+
     def _find_next_query(self, n, a, random_search, decision_type='distributed'):
         """
         Proposes the next query.
@@ -1145,8 +1090,6 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
             # Standardize
             Y = self.scaler[0].fit_transform(np.array(self.Y).reshape(-1, 1)).squeeze()
-            # all_x = torch.reshape(torch.tensor(self.X), [-1, len(self.domain.shape)])
-            # all_y = torch.squeeze(torch.tensor(self.Y))
             self.model = ExactGPModel(torch.tensor(self.X), torch.tensor(Y), self.likelihood)
             self.model.train()
             self.likelihood.train()

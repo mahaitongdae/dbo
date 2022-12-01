@@ -22,11 +22,11 @@ parser.add_argument('--constraint', type=str, default='disk')
 # parser.add_argument('--arg_max', type=np.ndarray, default=None)
 parser.add_argument('--n_workers', type=int, default=3)
 parser.add_argument('--kernel', type=str, default='Matern')
-parser.add_argument('--acquisition_function', type=str, default='es')
+parser.add_argument('--acquisition_function', type=str, default='ei')
 parser.add_argument('--policy', type=str, default='greedy')
 parser.add_argument('--unconstrained', type=bool, default=True)
-parser.add_argument('--decision_type', type=str, default='parallel')
-parser.add_argument('--fantasies', type=int, default=0)
+parser.add_argument('--decision_type', type=str, default='distributed')
+parser.add_argument('--fantasies', type=int, default=2)
 parser.add_argument('--regularization', type=str, default=None)
 parser.add_argument('--regularization_strength', type=float, default=0.01)
 parser.add_argument('--pending_regularization', type=str, default=None)
@@ -36,8 +36,8 @@ parser.add_argument('--n_iters', type=int, default=150)
 parser.add_argument('--n_runs', type=int, default=1)
 args = parser.parse_args()
 if args.n_workers == 3:
-    N = np.eye(3)
-    N[0, 1] = N[1, 0] = N[1, 2] = N[2, 1] = 1
+    N = np.ones([3,3])
+    # N[0, 1] = N[1, 0] = N[1, 2] = N[2, 1] = 1
     # args.n_iters = 50
 elif args.n_workers == 1:
     N = np.ones([1, 1])
