@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--objective', type=str, default='bird')
 parser.add_argument('--constraint', type=str, default='disk')
 # parser.add_argument('--arg_max', type=np.ndarray, default=None)
-parser.add_argument('--n_workers', type=int, default=3)
+parser.add_argument('--n_workers', type=int, default=10)
 parser.add_argument('--kernel', type=str, default='Matern')
 parser.add_argument('--acquisition_function', type=str, default='es')
 parser.add_argument('--policy', type=str, default='greedy')
@@ -42,7 +42,9 @@ if args.n_workers == 3:
 elif args.n_workers == 1:
     N = np.ones([1, 1])
     args.n_iters = 150
-assert args.n_workers == N.shape[0]
+if args.decision_type == 'parallel':
+    N = np.ones([args.n_workers,args.n_workers])
+# assert args.n_workers == N.shape[0]
 if function_dict.get(args.objective).arg_min is not None:
   arg_max = function_dict.get(args.objective).arg_min
 else:
@@ -84,6 +86,6 @@ else:
                                args=args)
 
 # Optimize
-BO.optimize(n_iters = args.n_iters, n_runs = args.n_runs, n_pre_samples = 5, random_search = 1000, plot = 30)
+BO.optimize(n_iters = args.n_iters, n_runs = args.n_runs, n_pre_samples = 15, random_search = 1000, plot = 30)
 for a in range(BO.n_workers):
     print("Predicted max {}: {}".format(a, BO.pre_max[a]))

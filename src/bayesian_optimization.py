@@ -993,10 +993,11 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         ucb = mu + self.beta * sigma
         amaxucb = x[np.argmax(ucb.clone().detach().numpy())][np.newaxis, :]
         self.amaxucb = amaxucb
-        x = np.vstack([amaxucb for _ in range(self.n_workers)])
+        # x = np.vstack([amaxucb for _ in range(self.n_workers)])
+        init_x = np.random.normal(amaxucb, 1.0, (self.n_workers, self.domain.shape[0]))
 
-        x = torch.tensor(x, requires_grad=True)
-        optimizer = torch.optim.Adam([x], lr=0.01)
+        x = torch.tensor(init_x, requires_grad=True)
+        optimizer = torch.optim.Adam([x], lr=0.1)
         training_iter = 50
         for i in range(training_iter):
             optimizer.zero_grad()
@@ -1009,7 +1010,9 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             #     i + 1, training_iter, loss.item(),
             # ))
             optimizer.step()
-
+        # print(x.clone().detach().numpy())
+        # print(amaxucb)
+        # print(x.clone().detach().numpy() - init_x)
         return x.clone().detach().numpy()
 
 
@@ -1086,7 +1089,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
         return x
 
-    def optimize(self, n_iters, n_runs = 1, x0=None, n_pre_samples=5, random_search=100, plot = False):
+    def optimize(self, n_iters, n_runs = 1, x0=None, n_pre_samples=15, random_search=100, plot = False):
         """
         Arguments:
         ----------
@@ -1184,7 +1187,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 if not n:
                     self._distance_traveled[run,n] = 0
                 else:
-                    XinAgent = np.array(self.X[self._initial_data_size - 3:]).reshape([-1, self.n_workers, len(self.domain.shape)])
+                    XinAgent = np.array(self.X[self._initial_data_size - self.n_workers:]).reshape([-1, self.n_workers, len(self.domain.shape)])
                     XinAgent = np.swapaxes(XinAgent, 0, 1)
                     self._distance_traveled[run,n] =  self._distance_traveled[run,n-1] + sum([np.linalg.norm(XinAgent[a][-2] - XinAgent[a][-1]) for a in range(self.n_workers)])
 
