@@ -176,6 +176,15 @@ class bayesian_optimization:
         conf95 = [1.96*rst/self._simple_regret.shape[0] for rst in r_std]
         return range(self._simple_regret.shape[1]), r_mean, conf95
 
+    def _cumulative_regret(self):
+        r_cum = [np.sum(self._simple_regret[:, : iter + 1], axis=1) for iter in range(self._simple_regret.shape[1])]
+        r_cum = np.array(r_cum).T
+        r_cum_mean = [np.mean(r_cum[:,iter]) for iter in range(r_cum.shape[1])]
+        r_std = [np.std(r_cum[:,iter]) for iter in range(r_cum.shape[1])]
+        # 95% confidence interval
+        conf95 = [1.96*rst/self._simple_regret.shape[0] for rst in r_std]
+        return range(self._simple_regret.shape[1]), r_cum_mean, conf95
+
     def _mean_distance_traveled(self):
         d_mean = [np.mean(self._distance_traveled[:,iter]) for iter in range(self._distance_traveled.shape[1])]
         d_std = [np.std(self._distance_traveled[:,iter]) for iter in range(self._distance_traveled.shape[1])]
@@ -840,9 +849,9 @@ class bayesian_optimization:
             plt.savefig(self._PDF_DIR_ + '/bo_iteration_%d_agent_%d.pdf' % (iter, a), bbox_inches='tight')
             plt.savefig(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d.png' % (iter, a), bbox_inches='tight')
 
-    def _plot_regret(self, iter, r_mean, conf95, log = False):
+    def _plot_regret(self, iter, r_mean, conf95, reward_type='instant', log = False):
 
-        use_log_scale = max(r_mean)/min(r_mean) > 10
+        use_log_scale = max(r_mean)/min(r_mean) > 10 if reward_type == 'instant' else False
 
         if not use_log_scale:
             # absolut error for linear scale
@@ -861,17 +870,17 @@ class bayesian_optimization:
         plt.plot(iter, r_mean, '-', linewidth=1)
         plt.fill_between(iter, upper, lower, alpha=0.3)
         plt.xlabel('iterations')
-        plt.ylabel('immediate regret')
+        plt.ylabel(reward_type + ' regret')
         plt.grid(b=True, which='major', color='grey', linestyle='-', alpha=0.6)
         plt.grid(b=True, which='minor', color='grey', linestyle='--', alpha=0.3)
         plt.gca().xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
         plt.tight_layout()
         if use_log_scale:
-            plt.savefig(self._PDF_DIR_ + '/regret_log.pdf', bbox_inches='tight')
-            plt.savefig(self._PNG_DIR_ + '/regret_log.png', bbox_inches='tight')
+            plt.savefig(self._PDF_DIR_ + '/' + reward_type + '_regret_log.pdf', bbox_inches='tight')
+            plt.savefig(self._PNG_DIR_ + '/' + reward_type + '_regret_log.png', bbox_inches='tight')
         else:
-            plt.savefig(self._PDF_DIR_ + '/regret.pdf', bbox_inches='tight')
-            plt.savefig(self._PNG_DIR_ + '/regret.png', bbox_inches='tight')
+            plt.savefig(self._PDF_DIR_ + '/' + reward_type + '_regret.pdf', bbox_inches='tight')
+            plt.savefig(self._PNG_DIR_ + '/' + reward_type + '_regret.png', bbox_inches='tight')
 
     def _generate_gif(self, n_iters, plot):
         if self._dim == 1:
@@ -1204,15 +1213,17 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         # Compute and plot regret
         iter, r_mean, r_conf95 = self._mean_regret()
         self._plot_regret(iter, r_mean, r_conf95)
+        iter, r_cum_mean, r_cum_conf95 = self._cumulative_regret()
+        self._plot_regret(iter, r_cum_mean, r_cum_conf95, reward_type='cumulative')
 
         iter, d_mean, d_conf95 = self._mean_distance_traveled()
 
         # Save data
-        self._save_data(data = [iter, r_mean, r_conf95, d_mean, d_conf95], name = 'data')
+        self._save_data(data = [iter, r_mean, r_conf95, d_mean, d_conf95, r_cum_mean, r_cum_conf95], name = 'data')
 
         # Generate gif
-        if plot and n_runs == 1:
-            self._generate_gif(n_iters, plot)
+        # if plot and n_runs == 1:
+        #     self._generate_gif(n_iters, plot)
 
 
     def _plot_iteration(self, iter, plot_iter):
