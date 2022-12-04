@@ -7,7 +7,7 @@ import csv
 import __main__
 import json
 
-result_to_dump = 'ackley/to_compare'
+result_to_dump = 'rosenbrock/to_compare'
 # legends = ['distributed', 'regularized', 'expected', 'single_agent']
 
 def _plot_regret(result_dir, x_axis = 'iter', log=False, regret_type='instant'):

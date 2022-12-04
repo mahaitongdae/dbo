@@ -1085,7 +1085,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         fantasized_X = self.X.copy()
         fantasized_Y = self.Y.copy()
         ucb = mu + self.beta * sigma
-        amaxucb = x[np.argmax(ucb.clone().detach().numpy())]
+        amaxucb = x[np.argmax(ucb)]
         fantasized_y = 0.  # fantasized y will not affect sigma
         query = amaxucb
         queries.append(query)
