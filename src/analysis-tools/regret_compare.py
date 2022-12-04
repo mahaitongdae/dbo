@@ -7,10 +7,10 @@ import csv
 import __main__
 import json
 
-result_to_dump = 'bird'
+result_to_dump = 'ackley/to_compare'
 # legends = ['distributed', 'regularized', 'expected', 'single_agent']
 
-def _plot_regret(result_dir, x_axis = 'iter', log=False):
+def _plot_regret(result_dir, x_axis = 'iter', log=False, regret_type='instant'):
     root_dir = os.path.dirname(os.path.dirname(os.path.dirname( __main__.__file__ )))
     file_dir = join(join(join(root_dir, 'result'), result_to_dump), result_dir)
     file = os.path.join(file_dir,'data/data.csv')
@@ -36,9 +36,11 @@ def _plot_regret(result_dir, x_axis = 'iter', log=False):
     # file = result_dir + '/data/data.csv'
     with open(file, 'r') as csvfile:
         reader = csv.reader(csvfile, delimiter=',')
-
+        print(file)
         regret = []
         regret_err = []
+        cumu_regret = []
+        cumu_regret_err = []
         dist = []
         iter = []
         interactions = []
@@ -48,9 +50,15 @@ def _plot_regret(result_dir, x_axis = 'iter', log=False):
             regret.append(max(0, float(row[1])))
             regret_err.append(float(row[2]))
             dist.append(10**(-2)*float(row[3]))
+            cumu_regret.append(float(row[5]))
+            cumu_regret_err.append(float(row[6]))
 
-    r_mean = regret
-    conf95 = regret_err
+    if regret_type == 'instant':
+        r_mean = regret
+        conf95 = regret_err
+    else:
+        r_mean = cumu_regret
+        conf95 = cumu_regret_err
 
     use_log_scale = max(r_mean) / min(r_mean) > 10
 
@@ -85,43 +93,45 @@ def _plot_regret(result_dir, x_axis = 'iter', log=False):
 
 for x_axis in ['iter', 'interactions', 'dist']:
 
-    fig, ax = plt.subplots()
-    use_log_scale = False
-    legends = []
-    real_legends = []
-    results_dir = join(join(dirname(dirname(dirname(__file__))), 'result'), result_to_dump)
-    dirs = [dir for dir in os.listdir(results_dir) if os.path.isdir(os.path.join(results_dir,dir))]
-    i = 2
-    for result_dir in dirs:
-        log, auto_legend, x_axis = _plot_regret(result_dir, x_axis=x_axis)
-        use_log_scale = use_log_scale or log
-        if auto_legend in legends:
-            auto_legend = auto_legend + str(i)
-            i += 1
-        legends += [auto_legend, '']
-        real_legends.append((auto_legend))
+    for y_axis in ['instant', 'cumulative']:
 
-    ax.legend(legends)
-    h = ax.get_legend().legendHandles
-    handles = []
-    for i in range(len(real_legends)):
-        handles.append(h[2 * i])
+        fig, ax = plt.subplots()
+        use_log_scale = False
+        legends = []
+        real_legends = []
+        results_dir = join(join(dirname(dirname(dirname(__file__))), 'result'), result_to_dump)
+        dirs = [dir for dir in os.listdir(results_dir) if os.path.isdir(os.path.join(results_dir,dir))]
+        i = 2
+        for result_dir in dirs:
+            log, auto_legend, x_axis = _plot_regret(result_dir, x_axis=x_axis, regret_type=y_axis)
+            use_log_scale = use_log_scale or log
+            if auto_legend in legends:
+                auto_legend = auto_legend + str(i)
+                i += 1
+            legends += [auto_legend, '']
+            real_legends.append((auto_legend))
 
-    ax.get_legend().remove()
-    ax.legend(handles, real_legends)
+        ax.legend(legends)
+        h = ax.get_legend().legendHandles
+        handles = []
+        for i in range(len(real_legends)):
+            handles.append(h[2 * i])
+
+        ax.get_legend().remove()
+        ax.legend(handles, real_legends)
 
 
-    plt.ylabel('immediate regret')
-    # plt.legend(legends)
-    plt.grid(b=True, which='major', color='grey', linestyle='-', alpha=0.6)
-    plt.grid(b=True, which='minor', color='grey', linestyle='--', alpha=0.3)
-    plt.gca().xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
-    plt.tight_layout()
-    root_dir = os.path.dirname(os.path.dirname(os.path.dirname( __main__.__file__ )))
-    objective = result_to_dump
-    if use_log_scale:
-        plt.savefig(root_dir + '/result/'+ objective +'/regret_log_' + x_axis + '.pdf', bbox_inches='tight')
-        plt.savefig(root_dir + '/result/'+ objective +'/regret_log_' + x_axis + '.png', bbox_inches='tight')
-    else:
-        plt.savefig(root_dir + '/result/'+ objective +'/regret_' + x_axis + '.pdf', bbox_inches='tight')
-        plt.savefig(root_dir + '/result/'+ objective +'/regret_' + x_axis + '.png', bbox_inches='tight')
+        plt.ylabel(y_axis + ' regret')
+        # plt.legend(legends)
+        plt.grid(b=True, which='major', color='grey', linestyle='-', alpha=0.6)
+        plt.grid(b=True, which='minor', color='grey', linestyle='--', alpha=0.3)
+        plt.gca().xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+        plt.tight_layout()
+        root_dir = os.path.dirname(os.path.dirname(os.path.dirname( __main__.__file__ )))
+        objective = result_to_dump
+        if use_log_scale:
+            plt.savefig(root_dir + '/result/'+ objective +'/' + y_axis + '_regret_log_' + x_axis + '.pdf', bbox_inches='tight')
+            plt.savefig(root_dir + '/result/'+ objective +'/' + y_axis + '_regret_log_' + x_axis + '.png', bbox_inches='tight')
+        else:
+            plt.savefig(root_dir + '/result/'+ objective +'/' + y_axis + '_regret_' + x_axis + '.pdf', bbox_inches='tight')
+            plt.savefig(root_dir + '/result/'+ objective +'/' + y_axis + '_regret_' + x_axis + '.png', bbox_inches='tight')
