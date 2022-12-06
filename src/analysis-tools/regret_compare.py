@@ -8,6 +8,7 @@ import __main__
 import json
 
 result_to_dump = 'rosenbrock/to_compare'
+SLIDES = True
 # legends = ['distributed', 'regularized', 'expected', 'single_agent']
 
 def _plot_regret(result_dir, x_axis = 'iter', log=False, regret_type='instant'):
@@ -17,6 +18,7 @@ def _plot_regret(result_dir, x_axis = 'iter', log=False, regret_type='instant'):
     param = json.loads(open(os.path.join(file_dir,'data/config.json')).read())
     # identify legend
     alg_name = param['acquisition_function'].upper()
+
     if param['fantasies']:
         alg_name = alg_name + '-MC'
     if param['regularization'] is not None:
@@ -30,6 +32,9 @@ def _plot_regret(result_dir, x_axis = 'iter', log=False, regret_type='instant'):
         alg_name = 'MA-' + alg_name
     else:
         alg_name = 'SA-' + alg_name
+
+    if 'ES' in alg_name:
+        alg_name = alg_name + ' (ours)'
 
     auto_legend = alg_name
 
@@ -95,7 +100,10 @@ for x_axis in ['iter', 'interactions', 'dist']:
 
     for y_axis in ['instant', 'cumulative']:
 
-        fig, ax = plt.subplots()
+        if SLIDES:
+            fig, ax = plt.subplots(figsize=(3,2)) # figsize=(3,2)
+        else:
+            fig, ax = plt.subplots()
         use_log_scale = False
         legends = []
         real_legends = []
@@ -118,7 +126,8 @@ for x_axis in ['iter', 'interactions', 'dist']:
             handles.append(h[2 * i])
 
         ax.get_legend().remove()
-        ax.legend(handles, real_legends)
+        if not SLIDES:
+            ax.legend(handles, real_legends)
 
 
         plt.ylabel(y_axis + ' regret')
@@ -129,9 +138,23 @@ for x_axis in ['iter', 'interactions', 'dist']:
         plt.tight_layout()
         root_dir = os.path.dirname(os.path.dirname(os.path.dirname( __main__.__file__ )))
         objective = result_to_dump
+        y_axis = 'tight' + y_axis if SLIDES else y_axis
         if use_log_scale:
             plt.savefig(root_dir + '/result/'+ objective +'/' + y_axis + '_regret_log_' + x_axis + '.pdf', bbox_inches='tight')
             plt.savefig(root_dir + '/result/'+ objective +'/' + y_axis + '_regret_log_' + x_axis + '.png', bbox_inches='tight')
         else:
             plt.savefig(root_dir + '/result/'+ objective +'/' + y_axis + '_regret_' + x_axis + '.pdf', bbox_inches='tight')
             plt.savefig(root_dir + '/result/'+ objective +'/' + y_axis + '_regret_' + x_axis + '.png', bbox_inches='tight')
+
+        if SLIDES:
+            legfig, legax = plt.subplots(figsize=(7.5, 0.75))
+            legax.set_facecolor('white')
+            leg = legax.legend(handles, real_legends, loc='center', ncol=len(real_legends) / 2, handlelength=1.5,
+                               mode="expand", borderaxespad=0., prop={'size': 13})
+            legax.xaxis.set_visible(False)
+            legax.yaxis.set_visible(False)
+            for line in leg.get_lines():
+                line.set_linewidth(4.0)
+            plt.tight_layout(pad=0.5)
+            plt.savefig(root_dir + '/result/' + objective +'/' + 'legend.pdf',
+                        bbox_inches='tight')

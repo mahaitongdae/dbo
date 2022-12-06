@@ -136,7 +136,7 @@ class bayesian_optimization:
 
 
         self._TEMP_DIR_ = os.path.join(os.path.join(self._ROOT_DIR_, "result"), self.args.objective)
-        self._ID_DIR_ = os.path.join(self._TEMP_DIR_, self._DT_+alg_name)
+        self._ID_DIR_ = os.path.join(self._TEMP_DIR_, alg_name + self._DT_)
         self._DATA_DIR_ = os.path.join(self._ID_DIR_, "data")
         self._FIG_DIR_ = os.path.join(self._ID_DIR_, "fig")
         self._PNG_DIR_ = os.path.join(self._FIG_DIR_, "png")
@@ -959,6 +959,8 @@ class TorchGPModel():
         self.likelihood.eval()
         if isinstance(X, np.ndarray):
             X = torch.tensor(X)
+        if len(X.shape) == 1:
+            X = torch.reshape(X, [1, -1])
         with gpytorch.settings.fast_pred_var():
             f_pred = self.model(X)
             if return_tensor:
@@ -1023,6 +1025,8 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         elif acquisition_function == 'bucb' or acquisition_function == 'ucbpe':
             self._acquisition_function = self._batch_upper_confidential_bound
             self.acq_name = acquisition_function
+        elif acquisition_function == 'ei' and fantasies == self.n_workers:
+            self._acquisition_function = self._expected_improvement_fantasized
         else:
             print('Supported acquisition functions: ei, ts, es, bucb, ucbpe')
             return
@@ -1102,6 +1106,46 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             elif self.acq_name == 'ucbpe':
                 query = x[np.argmax(sigma)]
             queries.append(query)
+        return np.array(queries)
+
+    def _expected_improvement_fantasized(self, a, x, n):
+
+
+        x = x.reshape(-1, self._dim)
+        queries = []
+
+        model = self.model
+
+        # if self.beta is None:
+        #     self.beta = 2.
+        self.beta = 0.15 + 0.019 * n
+        mu, sigma = model.predict(x, return_std=True)
+        fantasized_X = self.X.copy()
+        fantasized_Y = self.Y.copy()
+
+        Y_max = np.max(model.y_train_)
+        with np.errstate(divide='ignore'):
+            Z = (mu - Y_max) / sigma
+            expected_improvement = (mu - Y_max) * norm.cdf(Z) + sigma * norm.pdf(Z)
+            expected_improvement[sigma == 0.0] = 0
+            expected_improvement[expected_improvement < 10 ** (-100)] = 0
+        query = x[np.argmax(expected_improvement)]
+        queries.append(query)
+        fantasized_y = float(model.predict(query))
+
+        for i in range(self.n_workers - 1):
+            fantasized_X.append(query)
+            fantasized_Y.append(fantasized_y)
+            model.fit(np.array(fantasized_X), np.array(fantasized_Y))
+            mu, sigma = model.predict(x, return_std=True)
+            with np.errstate(divide='ignore'):
+                Z = (mu - Y_max) / sigma
+                expected_improvement = (mu - Y_max) * norm.cdf(Z) + sigma * norm.pdf(Z)
+                expected_improvement[sigma == 0.0] = 0
+                expected_improvement[expected_improvement < 10 ** (-100)] = 0
+            query = x[np.argmax(expected_improvement)]
+            queries.append(query)
+            fantasized_y = float(model.predict(query))
         return np.array(queries)
 
     def _find_next_query(self, n, a, random_search, decision_type='distributed'):

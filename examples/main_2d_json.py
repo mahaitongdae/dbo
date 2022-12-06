@@ -9,7 +9,8 @@ import argparse
 np.random.seed(0)
 
 # Benchmark Function
-function_dict = {'bird':Bird(), 'disk':Disk(), 'ackley': Ackley(), 'rosenbrock': Rosenbrock()}
+function_dict = {'bird':Bird(), 'disk':Disk(), 'ackley': Ackley(), 'rosenbrock': Rosenbrock(),
+                 'eggholder': Eggholder()}
 kernel_dict = {'RBF':kernels.RBF(), 'Matern':kernels.Matern()}
 
 # Communication network
@@ -17,13 +18,13 @@ kernel_dict = {'RBF':kernels.RBF(), 'Matern':kernels.Matern()}
 # N = np.ones([1,1])
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--objective', type=str, default='ackley')
+parser.add_argument('--objective', type=str, default='eggholder')
 parser.add_argument('--constraint', type=str, default='disk')
 parser.add_argument('--model', type=str, default='torch') #torch or sklearn
 # parser.add_argument('--arg_max', type=np.ndarray, default=None)
-parser.add_argument('--n_workers', type=int, default=1)
+parser.add_argument('--n_workers', type=int, default=5)
 parser.add_argument('--kernel', type=str, default='Matern')
-parser.add_argument('--acquisition_function', type=str, default='es')
+parser.add_argument('--acquisition_function', type=str, default='ucbpe')
 parser.add_argument('--policy', type=str, default='greedy')
 parser.add_argument('--unconstrained', type=bool, default=True)
 parser.add_argument('--decision_type', type=str, default='parallel')
