@@ -18,11 +18,11 @@ kernel_dict = {'RBF':kernels.RBF(), 'Matern':kernels.Matern()}
 # N = np.ones([1,1])
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--objective', type=str, default='eggholder')
+parser.add_argument('--objective', type=str, default='ackley')
 parser.add_argument('--constraint', type=str, default='disk')
 parser.add_argument('--model', type=str, default='torch') #torch or sklearn
 # parser.add_argument('--arg_max', type=np.ndarray, default=None)
-parser.add_argument('--n_workers', type=int, default=5)
+parser.add_argument('--n_workers', type=int, default=10)
 parser.add_argument('--kernel', type=str, default='Matern')
 parser.add_argument('--acquisition_function', type=str, default='ucbpe')
 parser.add_argument('--policy', type=str, default='greedy')
@@ -34,7 +34,7 @@ parser.add_argument('--regularization_strength', type=float, default=0.01)
 parser.add_argument('--pending_regularization', type=str, default=None)
 parser.add_argument('--pending_regularization_strength', type=float, default=0.01)
 parser.add_argument('--grid_density', type=int, default=30)
-parser.add_argument('--n_iters', type=int, default=150)
+parser.add_argument('--n_iters', type=int, default=10)
 parser.add_argument('--n_runs', type=int, default=5)
 args = parser.parse_args()
 if args.n_workers == 3:

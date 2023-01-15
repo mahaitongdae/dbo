@@ -511,6 +511,7 @@ class bayesian_optimization:
         """
 
         self._simple_regret = np.zeros((n_runs, n_iters+1))
+        self._simple_cumulative_regret = np.zeros((n_runs, n_iters + 1))
         self._distance_traveled = np.zeros((n_runs, n_iters+1))
 
         for run in tqdm(range(n_runs), position=0, leave = None, disable = not n_runs > 1):
@@ -603,6 +604,7 @@ class bayesian_optimization:
 
                 # Calculate regret
                 self._simple_regret[run,n] = self._regret(np.max([y_max for y_a in self.Y_train for y_max in y_a]))
+                self._simple_cumulative_regret[run, n] = self._regret(np.max([y_max for y_a in self.Y_train for y_max in y_a]))
                 # Calculate distance traveled
                 if not n:
                     self._distance_traveled[run,n] = 0
@@ -1196,6 +1198,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         """
 
         self._simple_regret = np.zeros((n_runs, n_iters+1))
+        self._simple_cumulative_regret = np.zeros((n_runs, n_iters + 1))
         self._distance_traveled = np.zeros((n_runs, n_iters+1))
 
         for run in tqdm(range(n_runs), position=0, leave = None, disable = not n_runs > 1):
@@ -1272,6 +1275,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
                 # Calculate regret
                 self._simple_regret[run,n] = self._regret(np.max(self.Y_train))
+                self._simple_cumulative_regret[run, n] = self._regret(np.max(self.Y_train))
                 # Calculate distance traveled
                 if not n:
                     self._distance_traveled[run,n] = 0
