@@ -7,7 +7,7 @@ import csv
 import __main__
 import json
 
-result_to_dump = 'rosenbrock/to_compare'
+result_to_dump = 'ackley'
 SLIDES = True
 # legends = ['distributed', 'regularized', 'expected', 'single_agent']
 

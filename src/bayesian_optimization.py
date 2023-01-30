@@ -548,7 +548,7 @@ class bayesian_optimization:
             else:
                 for a in range(self.n_workers):
                     Y = self.scaler[a].fit_transform(np.array(self.Y[a]).reshape(-1, 1)).squeeze()
-                    self.model[a] = TorchGPModel(torch.tensor(self.X[a]), torch.tensor(Y))
+                    self.model[a] = TorchGPModel(torch.tensor(self.X[a]).float(), torch.tensor(Y).float())
 
 
             for n in tqdm(range(n_iters+1), position = n_runs > 1, leave = None):
@@ -944,9 +944,9 @@ class TorchGPModel():
         if isinstance(X, list):
             X = np.array(X)
         if isinstance(X, np.ndarray):
-            X = torch.tensor(X)
+            X = torch.tensor(X).float()
         if isinstance(Y, np.ndarray):
-            Y = torch.tensor(Y)
+            Y = torch.tensor(Y).float()
         if len(X.shape) == 2:
             X = X
         if len(Y.shape) == 2:
@@ -960,7 +960,7 @@ class TorchGPModel():
         self.model.eval()
         self.likelihood.eval()
         if isinstance(X, np.ndarray):
-            X = torch.tensor(X)
+            X = torch.tensor(X).float()
         if len(X.shape) == 1:
             X = torch.reshape(X, [1, -1])
         with gpytorch.settings.fast_pred_var():
@@ -1056,12 +1056,12 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         # x = np.vstack([amaxucb for _ in range(self.n_workers)])
         init_x = np.random.normal(amaxucb, 1.0, (self.n_workers, self.domain.shape[0]))
 
-        x = torch.tensor(init_x, requires_grad=True)
+        x = torch.tensor(init_x, requires_grad=True,dtype=torch.float32)
         optimizer = torch.optim.Adam([x], lr=0.1)
         training_iter = 50
         for i in range(training_iter):
             optimizer.zero_grad()
-            joint_x = torch.vstack((x,torch.tensor(amaxucb)))
+            joint_x = torch.vstack((x,torch.tensor(amaxucb).float()))
             cov_x_xucb = self.model.predict(joint_x, return_cov=True, return_tensor=True)[1][-1, :-1].reshape([-1,1])
             cov_x_x = self.model.predict(x, return_cov=True, return_tensor=True)[1]
             loss = -torch.matmul(torch.matmul(cov_x_xucb.T, torch.linalg.inv(cov_x_x + 0.01 * torch.eye(len(cov_x_x)))), cov_x_xucb)
@@ -1229,7 +1229,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
             # Standardize
             Y = self.scaler[0].fit_transform(np.array(self.Y).reshape(-1, 1)).squeeze()
-            self.model = TorchGPModel(torch.tensor(self.X), torch.tensor(Y))
+            self.model = TorchGPModel(torch.tensor(self.X).float(), torch.tensor(Y).float())
             self.model.train()
             # self.likelihood.train()
 
