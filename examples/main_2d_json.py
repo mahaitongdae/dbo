@@ -26,9 +26,9 @@ parser.add_argument('--objective', type=str, default='rosenbrock')
 parser.add_argument('--constraint', type=str, default='disk')
 parser.add_argument('--model', type=str, default='torch') #torch or sklearn
 # parser.add_argument('--arg_max', type=np.ndarray, default=None)
-parser.add_argument('--n_workers', type=int, default=30)
+parser.add_argument('--n_workers', type=int, default=5)
 parser.add_argument('--kernel', type=str, default='Matern')
-parser.add_argument('--acquisition_function', type=str, default='bucb')
+parser.add_argument('--acquisition_function', type=str, default='es')
 parser.add_argument('--policy', type=str, default='greedy')
 parser.add_argument('--unconstrained', type=bool, default=True)
 parser.add_argument('--decision_type', type=str, default='parallel')
@@ -39,7 +39,10 @@ parser.add_argument('--pending_regularization', type=str, default=None)
 parser.add_argument('--pending_regularization_strength', type=float, default=0.01)
 parser.add_argument('--grid_density', type=int, default=30)
 parser.add_argument('--n_iters', type=int, default=150)
+parser.add_argument('--sim', type=bool, default=False)
 parser.add_argument('--n_runs', type=int, default=5)
+parser.add_argument('--projection_in_graident_step', type=bool, default=False)
+parser.add_argument('--truncated_at_regret', default=None)
 args = parser.parse_args()
 if args.n_workers == 3:
     N = np.ones([3,3])
@@ -55,6 +58,10 @@ if function_dict.get(args.objective).arg_min is not None:
   arg_max = function_dict.get(args.objective).arg_min
 else:
   arg_max = None
+
+if args.sim:
+    args.projection_in_graident_step = True
+    args.truncated_at_regret = 1e-1
 
 # Bayesian optimization object
 if args.decision_type == 'distributed':

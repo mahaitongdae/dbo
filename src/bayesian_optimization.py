@@ -134,6 +134,10 @@ class bayesian_optimization:
         else:
             alg_name = 'SA-' + alg_name
 
+        if 'sim' in self.args:
+            if self.args.sim == True:
+                alg_name = alg_name + '-SIM'
+
 
         self._TEMP_DIR_ = os.path.join(os.path.join(self._ROOT_DIR_, "result"), self.args.objective)
         self._ID_DIR_ = os.path.join(self._TEMP_DIR_, alg_name + self._DT_)
@@ -1033,14 +1037,15 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             print('Supported acquisition functions: ei, ts, es, bucb, ucbpe')
             return
 
-    def _entropy_search_grad(self, a, x, n):
+    def _entropy_search_grad(self, a, x, n, radius=0.8):
         """
                 Entropy search acquisition function.
                 Args:
                     a: # agents
                     x: array-like, shape = [n_samples, n_hyperparams]
                     n: agent nums
-                    model:
+                    projection: if project to a close circle
+                    radius: circle of the projected circle
                 """
 
         x = x.reshape(-1, self._dim)
@@ -1067,6 +1072,12 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             loss = -torch.matmul(torch.matmul(cov_x_xucb.T, torch.linalg.inv(cov_x_x + 0.01 * torch.eye(len(cov_x_x)))), cov_x_xucb)
             loss.backward()
             optimizer.step()
+            if 'projection_in_grad_step' in self.args:
+                if self.args.projection_in_grad_step and i > int(0.8 * training_iter):
+                    init_x = torch.tensor(self._next_query).float()
+                    lenth = torch.norm(x - init_x, dim=1).reshape([-1, 1])
+                    x = torch.where((lenth > radius).reshape([-1, 1]), init_x + radius / lenth * (x-init_x), x)
+                    x.detach_()
         return x.clone().detach().numpy()
 
 

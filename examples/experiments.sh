@@ -1,3 +1,10 @@
-python main_2d_json.py --acquisition_function 'es' --n_workers 30
-python main_2d_json.py --acquisition_function 'ucbpe' --n_workers 30
-python main_2d_json.py --acquisition_function 'bucb' --n_workers 30
+python main_2d_json.py --acquisition_function 'es' --n_workers 10 --objective 'ackley'
+python main_2d_json.py --acquisition_function 'ucbpe' --n_workers 10 --objective 'ackley'
+python main_2d_json.py --acquisition_function 'bucb' --n_workers 10 --objective 'ackley'
+python main_2d_json.py --acquisition_function 'ei' --n_workers 10 --fantasies 10 --objective 'ackley'
+python main_2d_json.py --acquisition_function 'ts' --n_workers 10 --decision_type 'distributed' --objective 'ackley'
+python main_2d_json.py --acquisition_function 'es' --n_workers 50 --objective 'ackley'
+python main_2d_json.py --acquisition_function 'ucbpe' --n_workers 50 --objective 'ackley'
+python main_2d_json.py --acquisition_function 'bucb' --n_workers 50 --objective 'ackley'
+python main_2d_json.py --acquisition_function 'ei' --n_workers 50 --fantasies 50 --objective 'ackley'
+#python main_2d_json.py --acquisition_function 'ts' --n_workers 50 --decision_type 'distributed'
