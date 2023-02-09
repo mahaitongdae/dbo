@@ -22,6 +22,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import kernels, GaussianProcessRegressor
 import torch
 import gpytorch
+import pandas as pd
 
 warnings.filterwarnings("ignore")
 
@@ -54,6 +55,8 @@ class bayesian_optimization:
             self._acquisition_function = self._entropy_search_single
         elif acquisition_function == 'ucb' or acquisition_function == 'bucb' or acquisition_function == 'ucbpe':
             self._acquisition_function = self._upper_confidential_bound
+        elif acquisition_function == 'sp':
+            pass
         else:
             print('Supported acquisition functions: ei, ts, es, ucb')
             return
@@ -129,14 +132,15 @@ class bayesian_optimization:
         #     else:
         #         alg_name = 'CWEI'
 
-        if args.n_workers > 1:
-            alg_name = 'MA-' + alg_name
-        else:
-            alg_name = 'SA-' + alg_name
+        # if args.n_workers > 1:
+        #     alg_name = 'MA-' + alg_name
+        # else:
+        #     alg_name = 'SA-' + alg_name
 
         if 'sim' in self.args:
             if self.args.sim == True:
                 alg_name = alg_name + '-SIM'
+        self.alg_name = alg_name
 
 
         self._TEMP_DIR_ = os.path.join(os.path.join(self._ROOT_DIR_, "result"), self.args.objective)
@@ -432,7 +436,7 @@ class bayesian_optimization:
 
         return expected_acquisition
 
-    def _blotzmann(self, n, x, acq):
+    def _boltzmann(self, n, x, acq):
         """
         Softmax distribution on acqusition function points for stochastic query selection
         Arguments:
@@ -490,7 +494,7 @@ class bayesian_optimization:
         # Apply policy
         if self._policy == 'boltzmann':
             # Boltzmann Policy
-            x = self._blotzmann(n, x, acq)
+            x = self._boltzmann(n, x, acq)
         else:
             #Greedy Policy
             x = x[np.argmax(acq), :]
@@ -1024,7 +1028,8 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                  pending_regularization = pending_regularization, pending_regularization_strength = pending_regularization_strength,
                  grid_density = grid_density, args=args)
         assert self.args.decision_type == 'parallel' or self.n_workers == 1
-        # self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        self.diversity_penalty = args.diversity_penalty
+        self.radius = args.div_radius
         self.acq_name = None
         if acquisition_function == 'es':
             self._acquisition_function = self._entropy_search_grad
@@ -1033,11 +1038,15 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             self.acq_name = acquisition_function
         elif acquisition_function == 'ei' and fantasies == self.n_workers:
             self._acquisition_function = self._expected_improvement_fantasized
+        elif acquisition_function == 'ts':
+            self._acquisition_function = self._thompson_sampling_centralized
+        elif acquisition_function == 'sp':
+            self._acquisition_function = self._stochastic_policy_centralized
         else:
             print('Supported acquisition functions: ei, ts, es, bucb, ucbpe')
             return
 
-    def _entropy_search_grad(self, a, x, n, radius=0.8):
+    def _entropy_search_grad(self, a, x, n, radius=0.1):
         """
                 Entropy search acquisition function.
                 Args:
@@ -1063,21 +1072,28 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
         x = torch.tensor(init_x, requires_grad=True,dtype=torch.float32)
         optimizer = torch.optim.Adam([x], lr=0.1)
-        training_iter = 50
+        training_iter = 200
         for i in range(training_iter):
             optimizer.zero_grad()
             joint_x = torch.vstack((x,torch.tensor(amaxucb).float()))
             cov_x_xucb = self.model.predict(joint_x, return_cov=True, return_tensor=True)[1][-1, :-1].reshape([-1,1])
             cov_x_x = self.model.predict(x, return_cov=True, return_tensor=True)[1]
-            loss = -torch.matmul(torch.matmul(cov_x_xucb.T, torch.linalg.inv(cov_x_x + 0.01 * torch.eye(len(cov_x_x)))), cov_x_xucb)
+            if self.diversity_penalty:
+                penalty = []
+                for i in itertools.combinations(range(self.n_workers - 1), 2):
+                    penalty.append(torch.clip(- 1./100. * torch.log(torch.norm(x[i[0]] - x[i[1]]) - self.radius), 0., torch.inf))
+                loss = -torch.matmul(torch.matmul(cov_x_xucb.T, torch.linalg.inv(cov_x_x + 0.01 * torch.eye(len(cov_x_x)))), cov_x_xucb) + sum(penalty)
+            else:
+                loss = -torch.matmul(
+                    torch.matmul(cov_x_xucb.T, torch.linalg.inv(cov_x_x + 0.01 * torch.eye(len(cov_x_x)))), cov_x_xucb)
             loss.backward()
             optimizer.step()
-            if 'projection_in_grad_step' in self.args:
-                if self.args.projection_in_grad_step and i > int(0.8 * training_iter):
-                    init_x = torch.tensor(self._next_query).float()
-                    lenth = torch.norm(x - init_x, dim=1).reshape([-1, 1])
-                    x = torch.where((lenth > radius).reshape([-1, 1]), init_x + radius / lenth * (x-init_x), x)
-                    x.detach_()
+            # print("Step: {}, loss: {:.3f}, penalty:{:.3f}".format(i, loss.detach().numpy().squeeze(), sum(penalty).detach().numpy()))
+            # if projection and i > int(0.8 * training_iter):
+            #     init_x = torch.tensor(self.current_robots_location)
+            #     lenth = torch.norm(x - init_x, dim=1).reshape([-1, 1])
+            #     x = torch.where((lenth > radius).reshape([-1, 1]), init_x + radius / lenth * (x-init_x), x)
+            #     x.detach_()
         return x.clone().detach().numpy()
 
 
@@ -1119,6 +1135,38 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             elif self.acq_name == 'ucbpe':
                 query = x[np.argmax(sigma)]
             queries.append(query)
+        return np.array(queries)
+
+    def _thompson_sampling_centralized(self, a, x, n):
+        x = x.reshape(-1, self._dim)
+        queries = []
+
+        model = self.model
+
+        samples = model.sample_y(x, n_samples=self.n_workers)
+
+        for i in range(self.n_workers):
+            query = x[np.argmax(samples[:, i])]
+            queries.append(query)
+
+        return np.array(queries)
+
+    def _stochastic_policy_centralized(self, a, x, n):
+        x = x.reshape(-1, self._dim)
+        acq = self.model.predict(x)
+        # for i in range(self.n_workers):
+        #     queries.append(self._boltzmann(n, x, acq))
+        C = max(abs(max(acq) - acq))
+        if C > 10 ** (-2):
+            beta = 3 * np.log(n + self._initial_data_size + 1) / C
+            _blotzmann_prob = lambda e: np.exp(beta * e)
+            bm = [_blotzmann_prob(e) for e in acq]
+            norm_bm = [float(i) / sum(bm) for i in bm]
+            idxes = np.random.choice(range(x.shape[0]), p=np.squeeze(norm_bm), size=(self.n_workers,))
+        else:
+            idxes = np.random.choice(range(x.shape[0]), size=(self.n_workers,))
+        queries = [x[idx] for idx in idxes]
+
         return np.array(queries)
 
     def _expected_improvement_fantasized(self, a, x, n):
@@ -1249,27 +1297,21 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
                 # record step indicator
                 self._record_step = False
-                if plot and n_runs == 1:
+                if plot and run == 0:
                     if n == n_iters or not n % plot:
                         self._record_step = True
 
                 # parallel/centralized decision
-                obs = [self.objective(q) for q in self._next_query]
-                self.X = self.X + [q for q in self._next_query]
-                self.Y = self.Y + obs
-                self.X_train = self.X_train + [q for q in self._next_query]
-                self.Y_train = self.Y_train + obs
-                # for a in range(self.n_workers):
-                #
-                #     # Updata data knowledge
-                if n == 0:
-                    self.X_train = self.X
-                    self.Y_train = self.Y
-                #     else:
-                #         self.X[a].append(self._next_query[a])
-                #         self.Y[a].append(self.objective(self._next_query[a]))
-                #         self.X_train[a].append(self._next_query[a])
-                #         self.Y_train[a].append(self.objective(self._next_query[a]))
+                if n > 0:
+                    obs = [self.objective(q) for q in self._next_query]
+                    self.X = self.X + [q for q in self._next_query]
+                    self.Y = self.Y + obs
+                # self.X_train = self.X_train + [q for q in self._next_query]
+                # self.Y_train = self.Y_train + obs
+                # Updata data knowledge
+                # if n == 0:
+                #     self.X_train = self.X
+                #     self.Y_train = self.Y
 
                 X = np.array(self.X)
                 # Standardize
@@ -1278,15 +1320,13 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 self.model.fit(X, Y)
                 if n % 40 == 0:
                     self.model.train()
-                    # self.likelihood.train()
 
                 # Find next query
                 self._next_query = self._find_next_query(n, 0, random_search, decision_type='parallel')
 
-
                 # Calculate regret
-                self._simple_regret[run,n] = self._regret(np.max(self.Y_train))
-                self._simple_cumulative_regret[run, n] = self._regret(np.max(self.Y_train))
+                _simple_regret = self._regret(np.max(self.Y))
+                _simple_cumulative_regret = self._regret(np.max(self.Y))
                 # Calculate distance traveled
                 if not n:
                     self._distance_traveled[run,n] = 0
@@ -1306,17 +1346,36 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         #     self.pre_max.append(self.model[a].X_train_[np.array(self.model[a].y_train_).argmax()]) todo: used for what?
 
         # Compute and plot regret
-        iter, r_mean, r_conf95 = self._mean_regret()
-        self._plot_regret(iter, r_mean, r_conf95)
-        iter, r_cum_mean, r_cum_conf95 = self._cumulative_regret()
-        self._plot_regret(iter, r_cum_mean, r_cum_conf95, reward_type='cumulative')
-
-        iter, d_mean, d_conf95 = self._mean_distance_traveled()
+        # iter, r_mean, r_conf95 = self._mean_regret()
+        # self._plot_regret(iter, r_mean, r_conf95)
+        # iter, r_cum_mean, r_cum_conf95 = self._cumulative_regret()
+        # self._plot_regret(iter, r_cum_mean, r_cum_conf95, reward_type='cumulative')
+        #
+        # iter, d_mean, d_conf95 = self._mean_distance_traveled()
 
         # Save data
-        self._save_data(data = [iter, r_mean, r_conf95, d_mean, d_conf95, r_cum_mean, r_cum_conf95], name = 'data')
+        # self._save_data(data = [iter, r_mean, r_conf95, d_mean, d_conf95, r_cum_mean, r_cum_conf95], name = 'data')
+                if n > 0:
+                    query_df_col_name = []
+                    obs_df_col_name = []
+                    for i in range(len(obs)):
+                        query_df_col_name = query_df_col_name + ['agent{}_x1'.format(i + 1), 'agent{}_x2'.format(i + 1)]
+                        obs_df_col_name = obs_df_col_name + ['agent{}_obs'.format(i + 1)]
+                    query_df = pd.DataFrame(np.asarray(self._next_query).reshape([1, -1]), columns=query_df_col_name)
+                    obs_df = pd.DataFrame(np.asarray(obs).reshape([1, -1]), columns=obs_df_col_name)
+                    data = dict(iteration=[n], runs=[run], alg=[self.alg_name], regret=[_simple_regret], distance_traveled=[self._distance_traveled[run, n]], )
+                    df = pd.DataFrame().from_dict(data)
+                    total_df = pd.concat([df,obs_df, query_df],axis=1)
+                    filepath = os.path.join(self._DATA_DIR_, 'data.csv')
+                    if run == 0 and n == 1:
+                        total_df.to_csv(filepath)
+                    else:
+                        total_df.to_csv(filepath, mode='a', header=False)
 
-        # Generate gif
+        with open(self._DATA_DIR_ + '/config.json', 'w', encoding='utf-8') as file:
+            json.dump(vars(self.args), file, ensure_ascii=False, indent=4)
+
+            # Generate gif
         # if plot and n_runs == 1:
         #     self._generate_gif(n_iters, plot)
 
@@ -1359,9 +1418,8 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
         for a in range(1):
 
-            fig, ax = plt.subplots(1, 3, figsize=(10,4), sharey=True) # , sharex=True
-            (ax1, ax2, ax3) = ax
-            plt.setp(ax.flat, aspect=1.0, adjustable='box')
+            fig1, ax1 = plt.subplots(figsize=(4, 4), sharey=True) # , sharex=True
+            # plt.setp(ax.flat, aspect=1.0, adjustable='box')
 
             N = 100
             # Objective plot
@@ -1370,13 +1428,13 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             cp1 = ax1.contourf(X, Y, np.array(Y_obj).reshape(X.shape), clev1,  cmap = cm.coolwarm)
             for c in cp1.collections:
                 c.set_edgecolor("face")
-            cbar1 = plt.colorbar(cp1, ax=ax1, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
+            cbar1 = plt.colorbar(cp1, ax=ax1, shrink = 0.9, format=fmt, pad = 0.05, location='right')
             cbar1.ax.tick_params(labelsize=10)
             cbar1.ax.locator_params(nbins=5)
             ax1.autoscale(False)
             ax1.scatter(x[:, 0], x[:, 1], zorder=1, color = rgba[a], s = 10)
-            ax1.axvline(self._next_query[a][0], color='k', linewidth=1)
-            ax1.axhline(self._next_query[a][1], color='k', linewidth=1)
+            # ax1.axvline(self._next_query[a][0], color='k', linewidth=1)
+            # ax1.axhline(self._next_query[a][1], color='k', linewidth=1)
             ax1.set_ylabel("y", fontsize = 10, rotation=0)
             leg1 = ax1.legend(['Objective'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
             ax1.add_artist(leg1)
@@ -1388,12 +1446,22 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             ax1.tick_params(axis='both', which='both', labelsize=10)
             ax1.scatter(self.arg_max[:,0], self.arg_max[:,1], marker='x', c='gold', s=30)
 
-            if self.n_workers > 1:
-                ax1.legend(["Iteration %d" % (iter), "Agent %d" % (a)], fontsize = 10, loc='upper left', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
-            else:
-                ax1.legend(["Iteration %d" % (iter)], fontsize = 10, loc='upper left', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            # if self.n_workers > 1:
+            #     ax1.legend(["Iteration %d" % (iter), "Entropy Search"], fontsize = 10, loc='upper left', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            # else:
+            #     ax1.legend(["Iteration %d" % (iter)], fontsize = 10, loc='upper left', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
+            ax1.legend([self.alg_name], fontsize=10, loc='upper left', handletextpad=0, handlelength=0,
+                       fancybox=True, framealpha=0.2)
+
+            ax1.tick_params(axis='both', which='major', labelsize=10)
+            ax1.tick_params(axis='both', which='minor', labelsize=10)
+            fig1.subplots_adjust(wspace=0, hspace=0)
+            ax1.yaxis.offsetText.set_fontsize(10)
+            plt.savefig(self._PDF_DIR_ + '/bo_iteration_%d_agent_%d_obj.pdf' % (iter, a), bbox_inches='tight')
+            plt.savefig(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d_obj.png' % (iter, a), bbox_inches='tight')
 
             # Surrogate plot
+            fig2, ax2 = plt.subplots(figsize=(4, 4), sharey=True)  # , sharex=True
             d = 0
             if mu.reshape(X.shape).max() - mu.reshape(X.shape).min() == 0:
                 d = mu.reshape(X.shape).max()*0.1
@@ -1401,73 +1469,35 @@ class BayesianOptimizationCentralized(bayesian_optimization):
             cp2 = ax2.contourf(X, Y, mu.reshape(X.shape), clev2,  cmap = cm.coolwarm)
             for c in cp2.collections:
                 c.set_edgecolor("face")
-            cbar2 = plt.colorbar(cp2, ax=ax2, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
+            cbar2 = plt.colorbar(cp2, ax=ax2, shrink = 0.9, format=fmt, pad = 0.05, location='right')
             cbar2.ax.tick_params(labelsize=10)
             cbar2.ax.locator_params(nbins=5)
             ax2.autoscale(False)
             ax2.scatter(x[:, 0], x[:, 1], zorder=1, color = rgba[a], s = 10)
             if self._acquisition_function in ['es', 'ucb']:
                 ax2.scatter(self.amaxucb[0, 0], self.amaxucb[0, 1], marker='o', c='red', s=30)
-            ax2.axvline(self._next_query[a][0], color='k', linewidth=1)
-            ax2.axhline(self._next_query[a][1], color='k', linewidth=1)
+            # ax2.axvline(self._next_query[a][0], color='k', linewidth=1)
+            # ax2.axhline(self._next_query[a][1], color='k', linewidth=1)
             ax2.set_ylabel("y", fontsize = 10, rotation=0)
             ax2.legend(['Surrogate'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
             ax2.set_xlim([first_param_grid[0], first_param_grid[-1]])
             ax2.set_ylim([second_param_grid[0], second_param_grid[-1]])
             ax2.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
             ax2.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
-            # plt.setp(ax2.get_yticklabels()[0], visible=False)
-            # plt.setp(ax2.get_yticklabels()[-1], visible=False)
             ax2.tick_params(axis='both', which='both', labelsize=10)
+            ax2.legend([self.alg_name], fontsize=10, loc='upper left', handletextpad=0, handlelength=0,
+                       fancybox=True, framealpha=0.2)
+            ax2.scatter(self.arg_max[:, 0], self.arg_max[:, 1], marker='x', c='gold', s=30)
 
-            # # Broadcasted data
-            # for transmitter in range(self.n_workers):
-            #     x_bc = []
-            #     for (xbc,ybc) in self._prev_bc_data[transmitter][a]:
-            #         x_bc = np.append(x_bc,xbc).reshape(-1, self._dim)
-            #     x_bc = np.array(x_bc)
-            #     if x_bc.shape[0]>0:
-            #         ax1.scatter(x_bc[:, 0], x_bc[:, 1], zorder=1, color = rgba[transmitter], s = 10)
-            #         ax2.scatter(x_bc[:, 0], x_bc[:, 1], zorder=1, color = rgba[transmitter], s = 10)
 
-            # # Acquisition function contour plot
-            # d = 0
-            # if acq[a].reshape(X.shape).max() - acq[a].reshape(X.shape).min() == 0.0:
-            #     d = acq[a].reshape(X.shape).max()*0.1
-            #     d = 10**(-100)
-            # clev3 = np.linspace(acq[a].reshape(X.shape).min() - d, acq[a].reshape(X.shape).max() + d,N)
-            # cp3 = ax3.contourf(X, Y, acq[a].reshape(X.shape), clev3, cmap = cm.coolwarm)
-            # cbar3 = plt.colorbar(cp3, ax=ax3, shrink = 0.9, format=fmt, pad = 0.05, location='bottom')
-            # for c in cp3.collections:
-            #     c.set_edgecolor("face")
-            # cbar3.ax.locator_params(nbins=5)
-            # cbar3.ax.tick_params(labelsize=10)
-            # ax3.autoscale(False)
-            # ax3.axvline(self._next_query[a][0], color='k', linewidth=1)
-            # ax3.axhline(self._next_query[a][1], color='k', linewidth=1)
-            # ax3.set_xlabel("x", fontsize = 10)
-            # ax3.set_ylabel("y", fontsize = 10, rotation=0)
-            # ax3.legend(['Acquisition'], fontsize = 10, loc='upper right', handletextpad=0, handlelength=0, fancybox=True, framealpha = 0.2)
-            # ax3.set_xlim([first_param_grid[0], first_param_grid[-1]])
-            # ax3.set_ylim([second_param_grid[0], second_param_grid[-1]])
-            # ax3.set_xticks(np.linspace(first_param_grid[0],first_param_grid[-1], 5))
-            # ax3.set_yticks(np.linspace(second_param_grid[0],second_param_grid[-1], 5))
-            # # plt.setp(ax3.get_yticklabels()[-1], visible=False)
-            # ax3.tick_params(axis='both', which='both', labelsize=10)
-
-            ax1.tick_params(axis='both', which='major', labelsize=10)
-            ax1.tick_params(axis='both', which='minor', labelsize=10)
             ax2.tick_params(axis='both', which='major', labelsize=10)
             ax2.tick_params(axis='both', which='minor', labelsize=10)
-            # ax3.tick_params(axis='both', which='major', labelsize=10)
-            # ax3.tick_params(axis='both', which='minor', labelsize=10)
-            ax1.yaxis.offsetText.set_fontsize(10)
             ax2.yaxis.offsetText.set_fontsize(10)
             # ax3.yaxis.offsetText.set_fontsize(10)
 
-            fig.subplots_adjust(wspace=0, hspace=0)
-            plt.savefig(self._PDF_DIR_ + '/bo_iteration_%d_agent_%d.pdf' % (iter, a), bbox_inches='tight')
-            plt.savefig(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d.png' % (iter, a), bbox_inches='tight')
+            fig2.subplots_adjust(wspace=0, hspace=0)
+            plt.savefig(self._PDF_DIR_ + '/bo_iteration_%d_agent_%d_sur.pdf' % (iter, a), bbox_inches='tight')
+            plt.savefig(self._PNG_DIR_ + '/bo_iteration_%d_agent_%d_sur.png' % (iter, a), bbox_inches='tight')
 
 
 
