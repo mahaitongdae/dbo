@@ -1058,7 +1058,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 """
 
         x = x.reshape(-1, self._dim)
-        self.beta = 3 - 0.019 * n
+        self.beta = 3 - 0.015 * n
 
         # self.model.eval()
         # self.likelihood.eval()
@@ -1298,8 +1298,12 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 # record step indicator
                 self._record_step = False
                 if plot and run == 0:
-                    if n == n_iters or not n % plot:
-                        self._record_step = True
+                    if isinstance(plot, int):
+                        if n == n_iters or not n % plot:
+                            self._record_step = True
+                    elif isinstance(plot, list):
+                        if n == n_iters or n in plot:
+                            self._record_step = True
 
                 # parallel/centralized decision
                 if n > 0:

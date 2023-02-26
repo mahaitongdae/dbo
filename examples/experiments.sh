@@ -24,14 +24,14 @@
 #python main_2d_json.py --acquisition_function 'es' --n_workers 5 --diversity_penalty True --objective 'bird' --div_radius 0.02
 #python main_2d_json.py --acquisition_function 'es' --n_workers 5 --diversity_penalty True --objective 'ackley' --div_radius 0.02
 #python main_2d_json.py --acquisition_function 'es' --n_workers 5 --diversity_penalty True --objective 'rosenbrock' --div_radius 0.02
-for OBJ in 'ackley' 'rosenbrock'
+for OBJ in 'ackley' 'bird' 'rosenbrock'
 do
-  python main_2d_json.py --acquisition_function 'es' --n_workers 30 --objective $OBJ
-  python main_2d_json.py --acquisition_function 'ucbpe' --n_workers 30 --objective $OBJ
-  python main_2d_json.py --acquisition_function 'bucb' --n_workers 30 --objective $OBJ
-  python main_2d_json.py --acquisition_function 'ei' --n_workers 30 --fantasies 30 --objective $OBJ
-  python main_2d_json.py --acquisition_function 'ts' --n_workers 30 --objective $OBJ
-  python main_2d_json.py --acquisition_function 'sp' --n_workers 30 --objective $OBJ
+  python main_2d_json.py --acquisition_function 'es' --n_workers 50 --objective $OBJ
+  python main_2d_json.py --acquisition_function 'ucbpe' --n_workers 50 --objective $OBJ
+  python main_2d_json.py --acquisition_function 'bucb' --n_workers 50 --objective $OBJ
+  python main_2d_json.py --acquisition_function 'ei' --n_workers 50 --fantasies 50 --objective $OBJ
+  python main_2d_json.py --acquisition_function 'ts' --n_workers 50 --objective $OBJ --random_search 100
+  python main_2d_json.py --acquisition_function 'sp' --n_workers 50 --objective $OBJ
 done
 
 #for OBJ in 'ackley' 'bird' 'rosenbrock'
