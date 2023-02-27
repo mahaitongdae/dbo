@@ -40,7 +40,7 @@ parser.add_argument('--pending_regularization_strength', type=float, default=0.0
 parser.add_argument('--grid_density', type=int, default=30)
 parser.add_argument('--n_iters', type=int, default=150)
 parser.add_argument('--sim', type=bool, default=False)
-parser.add_argument('--n_runs', type=int, default=5)
+parser.add_argument('--n_runs', type=int, default=1)
 parser.add_argument('--random_search', type=int, default=1000)
 parser.add_argument('--diversity_penalty', type=bool, default=False)
 parser.add_argument('--div_radius', type=float, default=0.2)

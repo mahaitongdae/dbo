@@ -1113,7 +1113,9 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
         # if self.beta is None:
         #     self.beta = 2.
-        self.beta = 0.15 + 0.019 * n
+        self.beta = 1. + 0.01 * n
+        # self.beta = 0.15 + 0.019 * n
+
         mu, sigma = model.predict(x, return_std=True)
         fantasized_X = self.X.copy()
         fantasized_Y = self.Y.copy()
@@ -1179,7 +1181,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
         # if self.beta is None:
         #     self.beta = 2.
-        self.beta = 0.15 + 0.019 * n
+        self.beta = 3. + 0.19 * n
         mu, sigma = model.predict(x, return_std=True)
         fantasized_X = self.X.copy()
         fantasized_Y = self.Y.copy()
@@ -1343,6 +1345,9 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 if self._record_step:
                     self._plot_iteration(n, plot)
 
+                mu = self.model.predict(X)
+                argmax_mean = X[np.argmax(mu)]
+
         # self.pre_arg_max = []
         # self.pre_max = []
         # for a in range(self.n_workers):
@@ -1367,7 +1372,8 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                         obs_df_col_name = obs_df_col_name + ['agent{}_obs'.format(i + 1)]
                     query_df = pd.DataFrame(np.asarray(self._next_query).reshape([1, -1]), columns=query_df_col_name)
                     obs_df = pd.DataFrame(np.asarray(obs).reshape([1, -1]), columns=obs_df_col_name)
-                    data = dict(iteration=[n], runs=[run], alg=[self.alg_name], regret=[_simple_regret], distance_traveled=[self._distance_traveled[run, n]], )
+                    data = dict(iteration=[n], runs=[run], alg=[self.alg_name], regret=[_simple_regret], distance_traveled=[self._distance_traveled[run, n]],
+                                argmax_mean_x1=[argmax_mean[0]], argmax_mean_x2=[argmax_mean[1]])
                     df = pd.DataFrame().from_dict(data)
                     total_df = pd.concat([df,obs_df, query_df],axis=1)
                     filepath = os.path.join(self._DATA_DIR_, 'data.csv')
