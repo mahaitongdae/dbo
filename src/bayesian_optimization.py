@@ -1058,10 +1058,11 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 """
 
         x = x.reshape(-1, self._dim)
-        self.beta = 3 - 0.015 * n
+        self.beta = 1. + 0.2 * n
 
         # self.model.eval()
         # self.likelihood.eval()
+        domain = self.domain
 
         mu, sigma = self.model.predict(x, return_std=True, return_tensor=True)
         ucb = mu + self.beta * sigma
@@ -1071,7 +1072,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         init_x = np.random.normal(amaxucb, 1.0, (self.n_workers, self.domain.shape[0]))
 
         x = torch.tensor(init_x, requires_grad=True,dtype=torch.float32)
-        optimizer = torch.optim.Adam([x], lr=0.1)
+        optimizer = torch.optim.Adam([x], lr=0.01)
         training_iter = 200
         for i in range(training_iter):
             optimizer.zero_grad()
@@ -1088,12 +1089,10 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                     torch.matmul(cov_x_xucb.T, torch.linalg.inv(cov_x_x + 0.01 * torch.eye(len(cov_x_x)))), cov_x_xucb)
             loss.backward()
             optimizer.step()
-            # print("Step: {}, loss: {:.3f}, penalty:{:.3f}".format(i, loss.detach().numpy().squeeze(), sum(penalty).detach().numpy()))
-            # if projection and i > int(0.8 * training_iter):
-            #     init_x = torch.tensor(self.current_robots_location)
-            #     lenth = torch.norm(x - init_x, dim=1).reshape([-1, 1])
-            #     x = torch.where((lenth > radius).reshape([-1, 1]), init_x + radius / lenth * (x-init_x), x)
-            #     x.detach_()
+            # project back to domain
+            x = torch.where(x > torch.tensor(domain[:, 1]), torch.tensor(domain[:, 1]), x)
+            x = torch.where(x < torch.tensor(domain[:, 0]), torch.tensor(domain[:, 0]), x)
+            x.detach_()
         return x.clone().detach().numpy()
 
 
