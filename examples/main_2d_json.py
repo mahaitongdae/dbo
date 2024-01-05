@@ -2,7 +2,7 @@ import numpy as np
 import sklearn.gaussian_process.kernels as kernels
 import sys
 
-sys.path.append('/home/mht/PythonProjects/dbo')
+sys.path.append('/home/mht/PycharmProjects/dbo')
 
 from src.bayesian_optimization import bayesian_optimization, BayesianOptimizationCentralized
 from src.benchmark_functions_2D import *
