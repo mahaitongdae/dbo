@@ -1,7 +1,8 @@
-numpy
+gpytorch == 1.9.1
+torch == 1.13.1
+scikit-learn
 matplotlib
-scipy
-nose
-sklearn
-tqdm
-imageio
+seaborn
+pandas
+
+
