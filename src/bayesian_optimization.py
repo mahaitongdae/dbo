@@ -1058,10 +1058,11 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 """
 
         x = x.reshape(-1, self._dim)
-        self.beta = 3 - 0.019 * n
+        self.beta = 1. + 0.2 * n
 
         # self.model.eval()
         # self.likelihood.eval()
+        domain = self.domain
 
         mu, sigma = self.model.predict(x, return_std=True, return_tensor=True)
         ucb = mu + self.beta * sigma
@@ -1071,7 +1072,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
         init_x = np.random.normal(amaxucb, 1.0, (self.n_workers, self.domain.shape[0]))
 
         x = torch.tensor(init_x, requires_grad=True,dtype=torch.float32)
-        optimizer = torch.optim.Adam([x], lr=0.1)
+        optimizer = torch.optim.Adam([x], lr=0.01)
         training_iter = 200
         for i in range(training_iter):
             optimizer.zero_grad()
@@ -1088,12 +1089,10 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                     torch.matmul(cov_x_xucb.T, torch.linalg.inv(cov_x_x + 0.01 * torch.eye(len(cov_x_x)))), cov_x_xucb)
             loss.backward()
             optimizer.step()
-            # print("Step: {}, loss: {:.3f}, penalty:{:.3f}".format(i, loss.detach().numpy().squeeze(), sum(penalty).detach().numpy()))
-            # if projection and i > int(0.8 * training_iter):
-            #     init_x = torch.tensor(self.current_robots_location)
-            #     lenth = torch.norm(x - init_x, dim=1).reshape([-1, 1])
-            #     x = torch.where((lenth > radius).reshape([-1, 1]), init_x + radius / lenth * (x-init_x), x)
-            #     x.detach_()
+            # project back to domain
+            x = torch.where(x > torch.tensor(domain[:, 1]), torch.tensor(domain[:, 1]), x)
+            x = torch.where(x < torch.tensor(domain[:, 0]), torch.tensor(domain[:, 0]), x)
+            x.detach_()
         return x.clone().detach().numpy()
 
 
@@ -1113,7 +1112,9 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
         # if self.beta is None:
         #     self.beta = 2.
-        self.beta = 0.15 + 0.019 * n
+        self.beta = 1. + 0.01 * n
+        # self.beta = 0.15 + 0.019 * n
+
         mu, sigma = model.predict(x, return_std=True)
         fantasized_X = self.X.copy()
         fantasized_Y = self.Y.copy()
@@ -1179,7 +1180,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
 
         # if self.beta is None:
         #     self.beta = 2.
-        self.beta = 0.15 + 0.019 * n
+        self.beta = 3. + 0.19 * n
         mu, sigma = model.predict(x, return_std=True)
         fantasized_X = self.X.copy()
         fantasized_Y = self.Y.copy()
@@ -1298,8 +1299,12 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 # record step indicator
                 self._record_step = False
                 if plot and run == 0:
-                    if n == n_iters or not n % plot:
-                        self._record_step = True
+                    if isinstance(plot, int):
+                        if n == n_iters or not n % plot:
+                            self._record_step = True
+                    elif isinstance(plot, list):
+                        if n == n_iters or n in plot:
+                            self._record_step = True
 
                 # parallel/centralized decision
                 if n > 0:
@@ -1339,6 +1344,9 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 if self._record_step:
                     self._plot_iteration(n, plot)
 
+                mu = self.model.predict(X)
+                argmax_mean = X[np.argmax(mu)]
+
         # self.pre_arg_max = []
         # self.pre_max = []
         # for a in range(self.n_workers):
@@ -1363,7 +1371,8 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                         obs_df_col_name = obs_df_col_name + ['agent{}_obs'.format(i + 1)]
                     query_df = pd.DataFrame(np.asarray(self._next_query).reshape([1, -1]), columns=query_df_col_name)
                     obs_df = pd.DataFrame(np.asarray(obs).reshape([1, -1]), columns=obs_df_col_name)
-                    data = dict(iteration=[n], runs=[run], alg=[self.alg_name], regret=[_simple_regret], distance_traveled=[self._distance_traveled[run, n]], )
+                    data = dict(iteration=[n], runs=[run], alg=[self.alg_name], regret=[_simple_regret], distance_traveled=[self._distance_traveled[run, n]],
+                                argmax_mean_x1=[argmax_mean[0]], argmax_mean_x2=[argmax_mean[1]])
                     df = pd.DataFrame().from_dict(data)
                     total_df = pd.concat([df,obs_df, query_df],axis=1)
                     filepath = os.path.join(self._DATA_DIR_, 'data.csv')

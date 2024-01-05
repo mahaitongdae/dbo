@@ -7,7 +7,7 @@ import csv
 import __main__
 import json
 
-result_to_dump = 'bird/to_compare_10'
+result_to_dump = 'ackley/to_compare_5'
 SLIDES = True
 # legends = ['distributed', 'regularized', 'expected', 'single_agent']
 
