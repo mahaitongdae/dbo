@@ -1058,7 +1058,7 @@ class BayesianOptimizationCentralized(bayesian_optimization):
                 """
 
         x = x.reshape(-1, self._dim)
-        self.beta = 1. + 0.2 * n
+        self.beta = 3 - 0.019 * n
 
         # self.model.eval()
         # self.likelihood.eval()
